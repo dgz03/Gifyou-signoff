@@ -5575,8 +5575,8 @@ const App = () => {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b-2 border-gray-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl"></div>
@@ -5587,19 +5587,19 @@ const App = () => {
               </div>
             </div>
             
-            <div className="flex items-center gap-3">
-              <div className="text-xs font-semibold text-gray-500">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+              <div className="text-[11px] font-semibold text-gray-500 md:text-xs md:max-w-[220px] truncate">
                 Signed in as {activeUser?.email ?? 'team member'}
               </div>
               <input
                 type="text"
-                className="px-3 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors w-40"
+                className="px-3 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors w-full md:w-40"
                 placeholder="Display name"
                 value={actorName}
                 onChange={(e) => setActorName(e.target.value)}
               />
               <select 
-                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors"
+                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors w-full md:w-auto"
                 value={currentRole}
                 onChange={(e) => setCurrentRole(e.target.value as Role)}
                 disabled={roleLocked}
@@ -5613,13 +5613,13 @@ const App = () => {
               
               <button
                 onClick={() => setNotificationsOpen(true)}
-                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:border-gray-300 hover:text-gray-800 transition-colors"
+                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:border-gray-300 hover:text-gray-800 transition-colors w-full md:w-auto"
               >
                 Notifications
               </button>
               <button
                 onClick={() => void handleSignOut()}
-                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:border-gray-300 hover:text-gray-800 transition-colors"
+                className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:border-gray-300 hover:text-gray-800 transition-colors w-full md:w-auto"
               >
                 Sign out
               </button>
@@ -5627,7 +5627,7 @@ const App = () => {
               {currentRole === 'creator' && (
                 <button 
                   onClick={() => setUploadModal(true)}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors shadow-sm"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors shadow-sm w-full md:w-auto"
                 >
                   <Upload className="w-4 h-4" />
                   <span>Upload</span>
@@ -5636,7 +5636,7 @@ const App = () => {
             </div>
           </div>
 
-          <nav className="flex gap-2 mt-4">
+          <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 md:pb-0">
             <NavButton 
               active={currentView === 'dashboard'} 
               onClick={() => setCurrentView('dashboard')}
@@ -5666,7 +5666,7 @@ const App = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8 page-fade">
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8 page-fade">
         {dataLoading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <div className="rounded-2xl border-2 border-blue-100 bg-white px-6 py-5 text-center shadow-sm">
@@ -6685,7 +6685,7 @@ const NavButton = ({
 }) => (
   <button
     onClick={onClick}
-    className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+    className={`whitespace-nowrap px-4 py-2 md:px-5 md:py-2.5 rounded-xl text-sm font-bold transition-all ${
       active 
         ? 'bg-blue-600 text-white shadow-sm' 
         : 'text-gray-600 hover:bg-gray-100'
