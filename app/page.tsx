@@ -1222,7 +1222,7 @@ const App = () => {
   );
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<'magic' | 'password'>('magic');
+  const [authMode, setAuthMode] = useState<'magic' | 'password'>('password');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [authMessage, setAuthMessage] = useState('');
@@ -5517,32 +5517,10 @@ const App = () => {
 
           <h2 className="text-xl font-bold text-gray-900">Sign in</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Invite-only access. Use a magic link or a password set in Supabase.
+            Sign in with your team email + password.
           </p>
 
           <div className="mt-6 space-y-4">
-            <div className="flex rounded-2xl border-2 border-blue-100 bg-blue-50 p-1 text-sm font-semibold">
-              <button
-                onClick={() => handleAuthModeChange('magic')}
-                className={`flex-1 rounded-xl px-3 py-2 transition-colors ${
-                  authMode === 'magic'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-blue-700 hover:bg-blue-100'
-                }`}
-              >
-                Magic link
-              </button>
-              <button
-                onClick={() => handleAuthModeChange('password')}
-                className={`flex-1 rounded-xl px-3 py-2 transition-colors ${
-                  authMode === 'password'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-blue-700 hover:bg-blue-100'
-                }`}
-              >
-                Password
-              </button>
-            </div>
             <input
               type="email"
               className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
@@ -5550,61 +5528,30 @@ const App = () => {
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
             />
-            {authMode === 'password' && (
-              <input
-                type="password"
-                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
-                placeholder="Password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-              />
-            )}
+            <input
+              type="password"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+              placeholder="Password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+            />
             {authError && (
               <p className="text-sm text-rose-600 font-semibold">{authError}</p>
             )}
             {authMessage && (
               <p className="text-sm text-blue-600 font-semibold">{authMessage}</p>
             )}
-            {authMode === 'magic' ? (
-              <div className="space-y-2">
-                <button
-                  onClick={() => void handleMagicSignIn()}
-                  disabled={authCooldown > 0}
-                  className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                >
-                  Send magic link
-                </button>
-                {authCooldown > 0 && (
-                  <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                    <div className="flex items-center justify-between text-xs font-semibold text-blue-700">
-                      <span>Resend in {authCooldownLabel}</span>
-                      <span>Refreshing access</span>
-                    </div>
-                    <div className="mt-2 h-1.5 w-full rounded-full bg-blue-100">
-                      <div
-                        className="h-1.5 rounded-full bg-blue-500"
-                        style={{
-                          width: `${authCooldownRatio * 100}%`,
-                          transition: 'width 1s linear'
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <button
-                  onClick={() => void handlePasswordSignIn()}
-                  className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  Sign in with password
-                </button>
-                <p className="text-xs text-gray-500">
-                  Need a password? Set it in Supabase &gt; Authentication &gt; Users.
-                </p>
-              </div>
-            )}
+            <div className="space-y-2">
+              <button
+                onClick={() => void handlePasswordSignIn()}
+                className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Sign in
+              </button>
+              <p className="text-xs text-gray-500">
+                Need a password? Set it in Supabase &gt; Authentication &gt; Users.
+              </p>
+            </div>
             {isDevMode && (
               <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
                 <div className="flex items-center justify-between gap-3">
