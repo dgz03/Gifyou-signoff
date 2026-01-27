@@ -978,6 +978,23 @@ const saveActivityEntriesToApi = async (activity: ActivityEntry[], token?: strin
   }
 };
 
+const fetchRoleFromApi = async (token?: string) => {
+  try {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const response = await fetch('/api/role', { headers });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    if (payload?.role !== 'creator' && payload?.role !== 'reviewer') return null;
+    return { role: payload.role as Role, locked: Boolean(payload.locked) };
+  } catch (error) {
+    console.log('Role fetch failed:', error);
+    return null;
+  }
+};
+
 const buildId = (prefix: string) => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -1195,6 +1212,7 @@ const generateMockTextItems = (groups: TextGroup[], sections: TextSection[]): Te
 const App = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [currentRole, setCurrentRole] = useState<Role>('creator');
+  const [roleLocked, setRoleLocked] = useState(false);
   const [events, setEvents] = useState<EventRecord[]>(INITIAL_EVENTS);
   const [assets, setAssets] = useState<UiAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
@@ -1367,17 +1385,64 @@ const App = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
+    const cleanAuthParams = () => {
+      const paramsToClear = [
+        'code',
+        'type',
+        'access_token',
+        'refresh_token',
+        'provider_token',
+        'expires_in',
+        'expires_at',
+        'error',
+        'error_description'
+      ];
+      let changed = false;
+      paramsToClear.forEach((param) => {
+        if (url.searchParams.has(param)) {
+          url.searchParams.delete(param);
+          changed = true;
+        }
+      });
+
+      const hash = window.location.hash.startsWith('#')
+        ? window.location.hash.slice(1)
+        : window.location.hash;
+      if (hash) {
+        const hashParams = new URLSearchParams(hash);
+        let hashChanged = false;
+        paramsToClear.forEach((param) => {
+          if (hashParams.has(param)) {
+            hashParams.delete(param);
+            hashChanged = true;
+          }
+        });
+        if (hashChanged) {
+          const nextHash = hashParams.toString();
+          const nextUrl = `${url.pathname}${url.search}${nextHash ? `#${nextHash}` : ''}`;
+          window.history.replaceState({}, '', nextUrl);
+          return;
+        }
+      }
+
+      if (changed) {
+        window.history.replaceState({}, '', url.toString());
+      }
+    };
+
     const code = url.searchParams.get('code');
-    if (!code) return;
+    if (!code) {
+      cleanAuthParams();
+      return;
+    }
 
     supabase.auth.exchangeCodeForSession(code)
       .then(() => {
-        url.searchParams.delete('code');
-        url.searchParams.delete('type');
-        window.history.replaceState({}, '', url.toString());
+        cleanAuthParams();
       })
       .catch((error) => {
         console.log('Auth code exchange failed:', error);
+        cleanAuthParams();
       });
   }, []);
 
@@ -1420,6 +1485,34 @@ const App = () => {
     }, 1000);
     return () => clearTimeout(timer);
   }, [authCooldown]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (devUser) {
+      setRoleLocked(false);
+      return;
+    }
+    if (!session) {
+      setRoleLocked(false);
+      return;
+    }
+
+    let isMounted = true;
+    const loadRole = async () => {
+      const authToken = await getAuthToken(session);
+      if (!authToken) return;
+      const roleData = await fetchRoleFromApi(authToken);
+      if (!roleData || !isMounted) return;
+      setRoleLocked(roleData.locked);
+      if (roleData.locked) {
+        setCurrentRole(roleData.role);
+      }
+    };
+    void loadRole();
+    return () => {
+      isMounted = false;
+    };
+  }, [authLoading, devUser, session]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -5562,10 +5655,14 @@ const App = () => {
                 className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors"
                 value={currentRole}
                 onChange={(e) => setCurrentRole(e.target.value as Role)}
+                disabled={roleLocked}
               >
                 <option value="creator">Creator View</option>
                 <option value="reviewer">Reviewer View</option>
               </select>
+              {roleLocked && (
+                <span className="text-[11px] font-semibold text-gray-400">Role locked</span>
+              )}
               
               <button
                 onClick={() => setNotificationsOpen(true)}
