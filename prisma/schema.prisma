@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      Role     @default(CREATOR)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  uploadedAssets Asset[] @relation("Uploader")
+  reviewedAssets Asset[] @relation("Reviewer")
+  auditLogs      AuditLog[]
+}
+
+enum Role {
+  CREATOR
+  REVIEWER
+  ADMIN
+}
+
+model Event {
+  id              String   @id @default(cuid())
+  name            String
+  startDate       DateTime
+  endDate         DateTime?
+  totalTarget     Int
+  perToneTarget   Int
+  tier            Int
+  description     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assets Asset[]
+}
+
+model Asset {
+  id                String       @id @default(cuid())
+  title             String?
+  eventId           String
+  skinTone          SkinTone
+  status            AssetStatus  @default(TO_REVIEW)
+  uploaderId        String
+  reviewerId        String?
+  sourceFileUrl     String
+  previewUrl        String
+  version           Int          @default(1)
+  notesRefinement   String?
+  notesIdeas        String?
+  tags              Json
+  reasonRejected    String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  event     Event      @relation(fields: [eventId], references: [id])
+  uploader  User       @relation("Uploader", fields: [uploaderId], references: [id])
+  reviewer  User?      @relation("Reviewer", fields: [reviewerId], references: [id])
+  auditLogs AuditLog[]
+}
+
+enum SkinTone {
+  FAIR
+  LIGHT
+  OLIVE
+  MEDIUM_BROWN
+  DARK_BROWN
+  DEEP
+}
+
+enum AssetStatus {
+  TO_REVIEW
+  APPROVED
+  HOLD
+  REJECTED
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  assetId    String
+  action     String
+  fromStatus String?
+  toStatus   String?
+  userId     String
+  comment    String?
+  timestamp  DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+}
