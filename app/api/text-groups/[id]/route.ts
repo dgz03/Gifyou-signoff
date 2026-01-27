@@ -20,16 +20,23 @@ const mapUpdate = (updates: UpdatePayload) => {
   return payload;
 };
 
+const getParamId = (request: Request, params?: { id?: string }) => {
+  if (params?.id) return params.id;
+  const path = new URL(request.url).pathname;
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
+};
+
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params?: { id?: string } }
 ) {
   const user = await requireSupabaseUser(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const groupId = params.id;
+  const groupId = getParamId(request, params);
   let updates: UpdatePayload = {};
   try {
     updates = await request.json();
@@ -61,14 +68,14 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params?: { id?: string } }
 ) {
   const user = await requireSupabaseUser(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const groupId = params.id;
+  const groupId = getParamId(request, params);
   if (!groupId) {
     return NextResponse.json({ error: 'Missing group id.' }, { status: 400 });
   }

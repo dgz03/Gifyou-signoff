@@ -34,6 +34,13 @@ const extractR2Key = (mediaUrl?: string | null) => {
   return key.startsWith('/') ? key.slice(1) : key;
 };
 
+const getParamId = (request: Request, params?: { id?: string }) => {
+  if (params?.id) return params.id;
+  const path = new URL(request.url).pathname;
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
+};
+
 type UpdatePayload = {
   status?: string;
   reviewer?: string | null;
@@ -60,14 +67,14 @@ const mapUpdate = (updates: UpdatePayload) => {
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params?: { id?: string } }
 ) {
   const user = await requireSupabaseUser(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const assetId = params.id;
+  const assetId = getParamId(request, params);
   let updates: UpdatePayload = {};
   try {
     updates = await request.json();
@@ -99,14 +106,14 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params?: { id?: string } }
 ) {
   const user = await requireSupabaseUser(request);
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const assetId = params.id;
+  const assetId = getParamId(request, params);
   if (!assetId) {
     return NextResponse.json({ error: 'Missing asset id.' }, { status: 400 });
   }
