@@ -4,6 +4,13 @@ import { requireSupabaseUser } from '@/lib/requireSupabaseUser';
 
 export const runtime = 'nodejs';
 
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? '';
+const TELEGRAM_UPLOAD_BATCH_SIZE = Number.parseInt(
+  process.env.TELEGRAM_UPLOAD_BATCH_SIZE ?? '36',
+  10
+);
+
 type IncomingAsset = {
   id: string;
   title: string;
@@ -23,6 +30,71 @@ type IncomingAsset = {
   mediaStorage?: string;
   fileName?: string;
   fileSize?: number;
+};
+
+const sendTelegramMessage = async (message: string) => {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return false;
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        disable_web_page_preview: true
+      })
+    });
+    return response.ok;
+  } catch (error) {
+    console.log('Telegram notification failed:', error);
+    return false;
+  }
+};
+
+const notifyTelegramUploads = async (assets: IncomingAsset[]) => {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  if (!Number.isFinite(TELEGRAM_UPLOAD_BATCH_SIZE) || TELEGRAM_UPLOAD_BATCH_SIZE <= 0) return;
+  if (assets.length === 0) return;
+
+  const { data: state, error: stateError } = await supabaseAdmin
+    .from('notification_state')
+    .select('count')
+    .eq('id', 'telegram_uploads')
+    .maybeSingle();
+
+  if (stateError) {
+    console.log('Notification state lookup failed:', stateError);
+  }
+
+  const currentCount = state?.count ?? 0;
+  const nextCount = currentCount + assets.length;
+  const batchCount = Math.floor(nextCount / TELEGRAM_UPLOAD_BATCH_SIZE);
+  const remaining = nextCount % TELEGRAM_UPLOAD_BATCH_SIZE;
+
+  if (batchCount <= 0) {
+    await supabaseAdmin
+      .from('notification_state')
+      .upsert({ id: 'telegram_uploads', count: nextCount }, { onConflict: 'id' });
+    return;
+  }
+
+  const notifyCount = TELEGRAM_UPLOAD_BATCH_SIZE * batchCount;
+  const sent = await sendTelegramMessage(
+    `📦 ${notifyCount} new uploads are ready for review.`
+  );
+
+  if (sent) {
+    await supabaseAdmin
+      .from('notification_state')
+      .upsert(
+        { id: 'telegram_uploads', count: remaining, last_notified_at: new Date().toISOString() },
+        { onConflict: 'id' }
+      );
+  } else {
+    await supabaseAdmin
+      .from('notification_state')
+      .upsert({ id: 'telegram_uploads', count: nextCount }, { onConflict: 'id' });
+  }
 };
 
 const mapToDbAsset = (asset: IncomingAsset) => ({
@@ -91,6 +163,12 @@ export async function POST(request: Request) {
   if (error) {
     console.log('Assets save failed:', error);
     return NextResponse.json({ error: 'Unable to save assets.' }, { status: 500 });
+  }
+
+  try {
+    await notifyTelegramUploads(assets);
+  } catch (notifyError) {
+    console.log('Upload notification failed:', notifyError);
   }
 
   return NextResponse.json({ success: true });

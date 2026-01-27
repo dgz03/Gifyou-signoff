@@ -62,6 +62,12 @@ create table if not exists activity_logs (
 create index if not exists activity_logs_subject_idx
   on activity_logs(subject_type, subject_id);
 
+create table if not exists notification_state (
+  id text primary key,
+  count int not null default 0,
+  last_notified_at timestamptz
+);
+
 -- Lock down tables for client access (service role bypasses RLS).
 alter table if exists assets enable row level security;
 alter table if exists events enable row level security;
@@ -69,3 +75,4 @@ alter table if exists text_groups enable row level security;
 alter table if exists text_sections enable row level security;
 alter table if exists text_items enable row level security;
 alter table if exists activity_logs enable row level security;
+alter table if exists notification_state enable row level security;
