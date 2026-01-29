@@ -905,18 +905,27 @@ const fetchTextItemsFromApi = async (token?: string) => {
 };
 
 const saveTextItemsToApi = async (items: TextItem[], token?: string) => {
-  try {
+  const attempt = async (authToken?: string) => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json'
     };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
     }
     const response = await fetch('/api/text-items', {
       method: 'POST',
       headers,
       body: JSON.stringify({ items })
     });
+    return response;
+  };
+
+  try {
+    let response = await attempt(token);
+    if (response.status === 401) {
+      const freshToken = await getAuthToken(null);
+      response = await attempt(freshToken || token);
+    }
     return response.ok;
   } catch (error) {
     console.log('Text items save failed:', error);
@@ -1011,13 +1020,13 @@ const buildId = (prefix: string) => {
 const buildAssetId = () => buildId('asset');
 
 const getAuthToken = async (session: Session | null) => {
-  if (session?.access_token) return session.access_token;
   try {
     const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? '';
+    if (data.session?.access_token) return data.session.access_token;
   } catch {
-    return '';
+    // fall through
   }
+  return session?.access_token ?? '';
 };
 
 const buildSeedEventId = (event: { name: string; startDate: string }, index: number) => {
