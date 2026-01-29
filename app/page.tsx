@@ -106,7 +106,6 @@ const TEXT_GROUPS_STORAGE_KEY = 'gif-you-text-groups';
 const TEXT_SECTIONS_STORAGE_KEY = 'gif-you-text-sections';
 const EVENT_STORAGE_KEY = 'gif-you-events';
 const ACTIVITY_STORAGE_KEY = 'gif-you-activity';
-const ACTOR_STORAGE_KEY = 'gif-you-actor';
 const NOTIFICATIONS_STORAGE_KEY = 'gif-you-notifications';
 const MAX_INLINE_BYTES = 2 * 1024 * 1024;
 const AUTH_RESEND_SECONDS = 30;
@@ -925,6 +924,13 @@ const saveTextItemsToApi = async (items: TextItem[], token?: string) => {
   }
 };
 
+const refreshTextItemsFromApi = async (token?: string) => {
+  if (!token) return null;
+  const latest = await fetchTextItemsFromApi(token);
+  if (!latest) return null;
+  return latest;
+};
+
 const deleteTextItemFromApi = async (itemId: string, token?: string) => {
   try {
     const headers: Record<string, string> = {};
@@ -1241,7 +1247,6 @@ const App = () => {
   const textGroupItemsRef = useRef<HTMLDivElement | null>(null);
   const [devUser, setDevUser] = useState<{ email?: string | null; user_metadata?: { full_name?: string | null } } | null>(null);
   const [activityLogs, setActivityLogs] = useState<ActivityEntry[]>([]);
-  const [actorName, setActorName] = useState('');
   const [filters, setFilters] = useState<{
     status: AssetStatus | '';
     eventId: string;
@@ -1456,7 +1461,7 @@ const App = () => {
         setSession(data.session ?? null);
         setAuthLoading(false);
         if (data.session?.user) {
-          setActorName(prev => prev || data.session?.user?.user_metadata?.full_name || data.session?.user?.email || '');
+          // actor label now derived from session email
         }
       })
       .catch((error) => {
@@ -1468,7 +1473,7 @@ const App = () => {
       setSession(nextSession);
       setAuthLoading(false);
       if (nextSession?.user) {
-        setActorName(prev => prev || nextSession.user.user_metadata?.full_name || nextSession.user.email || '');
+        // actor label now derived from session email
       }
     });
 
@@ -1614,19 +1619,12 @@ const App = () => {
   }, [authLoading, devUser, session, session?.access_token]);
 
   useEffect(() => {
-    let storedActor: string | null = null;
     let storedNotifications: string | null = null;
 
     try {
-      storedActor = window.localStorage.getItem(ACTOR_STORAGE_KEY);
       storedNotifications = window.localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
     } catch {
-      storedActor = null;
       storedNotifications = null;
-    }
-
-    if (storedActor) {
-      setActorName(storedActor);
     }
 
     if (storedNotifications) {
@@ -1744,14 +1742,6 @@ const App = () => {
       console.log('Storage save skipped:', error);
     }
   }, [assets]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(ACTOR_STORAGE_KEY, actorName);
-    } catch (error) {
-      console.log('Actor storage save skipped:', error);
-    }
-  }, [actorName]);
 
   useEffect(() => {
     if (activityLogs.length > 0) {
@@ -2097,13 +2087,10 @@ const App = () => {
   const allTonesSelected = newAsset.skinTones.length === SKIN_TONES.length;
 
   const actorLabel = useMemo(() => {
-    const trimmed = actorName.trim();
-    if (trimmed) return trimmed;
     const sessionUser = activeUser;
-    if (sessionUser?.user_metadata?.full_name) return sessionUser.user_metadata.full_name;
     if (sessionUser?.email) return sessionUser.email;
     return currentRole === 'reviewer' ? 'Reviewer' : 'Creator';
-  }, [actorName, currentRole, activeUser]);
+  }, [currentRole, activeUser]);
   const authCooldownLabel = useMemo(() => formatCountdown(authCooldown), [authCooldown]);
   const authCooldownRatio = useMemo(() => (
     authCooldown > 0 ? authCooldown / AUTH_RESEND_SECONDS : 0
@@ -2847,7 +2834,6 @@ const App = () => {
     if (!isDevMode) return;
     const email = loginEmail.trim() || 'dev@local.test';
     setDevUser({ email, user_metadata: { full_name: 'Local Dev' } });
-    setActorName(prev => prev || 'Local Dev');
     setAuthError('');
     setAuthMessage('');
   };
@@ -3013,7 +2999,12 @@ const App = () => {
         if (!authToken) return;
         const synced = await saveTextItemsToApi(updatedItems, authToken);
         if (!synced) {
-          console.log('Text status sync failed.');
+          alert('Update saved locally but could not sync to the team feed.');
+          return;
+        }
+        const refreshed = await refreshTextItemsFromApi(authToken);
+        if (refreshed) {
+          setTextItems(refreshed);
         }
       })();
     }
@@ -5591,13 +5582,6 @@ const App = () => {
               <div className="text-[11px] font-semibold text-gray-500 md:text-xs md:max-w-[220px] truncate">
                 Signed in as {activeUser?.email ?? 'team member'}
               </div>
-              <input
-                type="text"
-                className="px-3 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors w-full md:w-40"
-                placeholder="Display name"
-                value={actorName}
-                onChange={(e) => setActorName(e.target.value)}
-              />
               <select 
                 className="px-4 py-2 border-2 border-gray-200 rounded-xl text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors w-full md:w-auto"
                 value={currentRole}
