@@ -921,10 +921,12 @@ const saveTextItemsToApi = async (items: TextItem[], token?: string) => {
   };
 
   try {
-    let response = await attempt(token);
+    let authToken = token || (await getAuthToken(null));
+    let response = await attempt(authToken);
     if (response.status === 401) {
-      const freshToken = await getAuthToken(null);
-      response = await attempt(freshToken || token);
+      const { data } = await supabase.auth.refreshSession();
+      authToken = data.session?.access_token || (await getAuthToken(null));
+      response = await attempt(authToken);
     }
     return response.ok;
   } catch (error) {
@@ -3012,13 +3014,12 @@ const App = () => {
     if (!devUser && updatedItems.length > 0) {
       void (async () => {
         const authToken = await getAuthToken(session);
-        if (!authToken) return;
         const synced = await saveTextItemsToApi(updatedItems, authToken);
         if (!synced) {
           setTextSyncError('Unable to sync text updates. Please refresh.');
           return;
         }
-        const refreshed = await refreshTextItemsFromApi(authToken);
+        const refreshed = await refreshTextItemsFromApi(authToken || (await getAuthToken(null)));
         if (refreshed) {
           setTextItems(refreshed);
         }
@@ -3122,11 +3123,9 @@ const App = () => {
         }
         if (updatedItem && !devUser) {
           const authToken = await getAuthToken(session);
-          if (authToken) {
-            const synced = await saveTextItemsToApi([updatedItem], authToken);
-            if (!synced) {
-              setTextSyncError('Unable to sync text updates. Please refresh.');
-            }
+          const synced = await saveTextItemsToApi([updatedItem], authToken);
+          if (!synced) {
+            setTextSyncError('Unable to sync text updates. Please refresh.');
           }
         }
       } else {
@@ -3162,11 +3161,9 @@ const App = () => {
         }
         if (!devUser) {
           const authToken = await getAuthToken(session);
-          if (authToken) {
-            const synced = await saveTextItemsToApi([newItem], authToken);
-            if (!synced) {
-              setTextSyncError('Unable to sync text updates. Please refresh.');
-            }
+          const synced = await saveTextItemsToApi([newItem], authToken);
+          if (!synced) {
+            setTextSyncError('Unable to sync text updates. Please refresh.');
           }
         }
       }
@@ -3240,11 +3237,9 @@ const App = () => {
     }
     if (!devUser) {
       const authToken = await getAuthToken(session);
-      if (authToken) {
-        const synced = await saveTextItemsToApi(items, authToken);
-        if (!synced) {
-          setTextSyncError('Unable to sync text updates. Please refresh.');
-        }
+      const synced = await saveTextItemsToApi(items, authToken);
+      if (!synced) {
+        setTextSyncError('Unable to sync text updates. Please refresh.');
       }
     }
     closeBulkImport();
