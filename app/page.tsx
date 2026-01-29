@@ -788,7 +788,7 @@ const fetchTextGroupsFromApi = async (token?: string) => {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const response = await fetch('/api/text-groups', { headers });
+    const response = await fetch('/api/text-groups', { headers, cache: 'no-store' });
     if (!response.ok) return null;
     const payload = await response.json();
     return normalizeStoredTextGroups(payload.groups ?? payload);
@@ -841,7 +841,7 @@ const fetchTextSectionsFromApi = async (token?: string) => {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const response = await fetch('/api/text-sections', { headers });
+    const response = await fetch('/api/text-sections', { headers, cache: 'no-store' });
     if (!response.ok) return null;
     const payload = await response.json();
     return normalizeStoredTextSections(payload.sections ?? payload);
@@ -894,7 +894,7 @@ const fetchTextItemsFromApi = async (token?: string) => {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const response = await fetch('/api/text-items', { headers });
+    const response = await fetch('/api/text-items', { headers, cache: 'no-store' });
     if (!response.ok) return null;
     const payload = await response.json();
     return normalizeStoredTextItems(payload.items ?? payload);

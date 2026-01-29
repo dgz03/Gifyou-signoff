@@ -11,27 +11,30 @@ export const requireSupabaseUser = async (request: Request) => {
     return null;
   }
 
-  const email = data.user.email?.toLowerCase() ?? '';
-  const allowedEmails = new Set(
-    (process.env.TEAM_ALLOWED_EMAILS ?? '')
-      .split(',')
-      .map(value => value.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  const allowedDomains = new Set(
-    (process.env.TEAM_ALLOWED_DOMAINS ?? '')
-      .split(',')
-      .map(value => value.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  const enforceAllowlist = process.env.TEAM_ENFORCE_ALLOWLIST === 'true';
+  if (enforceAllowlist) {
+    const email = data.user.email?.toLowerCase() ?? '';
+    const allowedEmails = new Set(
+      (process.env.TEAM_ALLOWED_EMAILS ?? '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean)
+    );
+    const allowedDomains = new Set(
+      (process.env.TEAM_ALLOWED_DOMAINS ?? '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean)
+    );
 
-  if (allowedEmails.size > 0 || allowedDomains.size > 0) {
-    const domain = email.split('@')[1] ?? '';
-    const emailAllowed = allowedEmails.size > 0 ? allowedEmails.has(email) : false;
-    const domainAllowed = allowedDomains.size > 0 ? allowedDomains.has(domain) : false;
-    if (!emailAllowed && !domainAllowed) {
-      console.log('Supabase auth blocked for non-team email:', email);
-      return null;
+    if (allowedEmails.size > 0 || allowedDomains.size > 0) {
+      const domain = email.split('@')[1] ?? '';
+      const emailAllowed = allowedEmails.size > 0 ? allowedEmails.has(email) : false;
+      const domainAllowed = allowedDomains.size > 0 ? allowedDomains.has(domain) : false;
+      if (!emailAllowed && !domainAllowed) {
+        console.log('Supabase auth blocked for non-team email:', email);
+        return null;
+      }
     }
   }
 
