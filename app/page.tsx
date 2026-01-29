@@ -2984,7 +2984,20 @@ const App = () => {
     const now = new Date().toISOString();
     const actor = actorLabel;
     const entries: ActivityEntry[] = [];
-    const updatedItems: TextItem[] = [];
+    const updatedItems = textItems
+      .filter(item => ids.includes(item.id))
+      .map(item => ({
+        ...item,
+        status,
+        reviewer: status === 'TO_REVIEW' ? null : actor,
+        reviewNotes: status === 'HOLD' || status === 'REJECTED' ? reviewNotes : '',
+        updatedAt: now
+      }));
+
+    if (updatedItems.length === 0) {
+      setTextSyncError('Unable to update text status. Please refresh and try again.');
+      return;
+    }
 
     setTextItems(prev => prev.map(item => {
       if (!ids.includes(item.id)) return item;
@@ -2999,15 +3012,7 @@ const App = () => {
         comment: reviewNotes ? reviewNotes.trim() : ''
       }));
 
-      const updated: TextItem = {
-        ...item,
-        status,
-        reviewer: status === 'TO_REVIEW' ? null : actor,
-        reviewNotes: status === 'HOLD' || status === 'REJECTED' ? reviewNotes : '',
-        updatedAt: now
-      };
-      updatedItems.push(updated);
-      return updated;
+      return updatedItems.find(updated => updated.id === item.id) ?? item;
     }));
 
     addActivityEntries(entries);
