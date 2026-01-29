@@ -1241,6 +1241,7 @@ const App = () => {
   const [assetsSyncError, setAssetsSyncError] = useState('');
   const [eventsLoading, setEventsLoading] = useState(true);
   const [textLoading, setTextLoading] = useState(true);
+  const [textSyncError, setTextSyncError] = useState('');
   const [activityLoading, setActivityLoading] = useState(true);
   const uploadLockRef = useRef(false);
   const textSaveLockRef = useRef(false);
@@ -1776,6 +1777,7 @@ const App = () => {
     let isMounted = true;
     const loadTextData = async () => {
       setTextLoading(true);
+      setTextSyncError('');
       const finish = () => {
         if (isMounted) setTextLoading(false);
       };
@@ -1878,6 +1880,11 @@ const App = () => {
           finish();
           return;
         }
+        if (isMounted) {
+          setTextSyncError('Unable to load team text items. Please refresh.');
+        }
+        finish();
+        return;
       } else if (isMounted) {
         setTextGroups([]);
         setTextSections([]);
@@ -2999,7 +3006,7 @@ const App = () => {
         if (!authToken) return;
         const synced = await saveTextItemsToApi(updatedItems, authToken);
         if (!synced) {
-          alert('Update saved locally but could not sync to the team feed.');
+          setTextSyncError('Unable to sync text updates. Please refresh.');
           return;
         }
         const refreshed = await refreshTextItemsFromApi(authToken);
@@ -3109,7 +3116,7 @@ const App = () => {
           if (authToken) {
             const synced = await saveTextItemsToApi([updatedItem], authToken);
             if (!synced) {
-              alert('Update saved locally but could not sync to the team feed.');
+              setTextSyncError('Unable to sync text updates. Please refresh.');
             }
           }
         }
@@ -3149,7 +3156,7 @@ const App = () => {
           if (authToken) {
             const synced = await saveTextItemsToApi([newItem], authToken);
             if (!synced) {
-              alert('Update saved locally but could not sync to the team feed.');
+              setTextSyncError('Unable to sync text updates. Please refresh.');
             }
           }
         }
@@ -3227,7 +3234,7 @@ const App = () => {
       if (authToken) {
         const synced = await saveTextItemsToApi(items, authToken);
         if (!synced) {
-          alert('Update saved locally but could not sync to the team feed.');
+          setTextSyncError('Unable to sync text updates. Please refresh.');
         }
       }
     }
@@ -5659,9 +5666,18 @@ const App = () => {
           </div>
         ) : (
           <>
-            {assetsSyncError && (
-              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                {assetsSyncError}
+            {(assetsSyncError || textSyncError) && (
+              <div className="mb-4 space-y-2">
+                {assetsSyncError && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    {assetsSyncError}
+                  </div>
+                )}
+                {textSyncError && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    {textSyncError}
+                  </div>
+                )}
               </div>
             )}
             {currentView === 'dashboard' && renderDashboardView()}
