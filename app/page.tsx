@@ -1242,6 +1242,7 @@ const App = () => {
   const [assets, setAssets] = useState<UiAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [assetNavIds, setAssetNavIds] = useState<string[]>([]);
   const selectedAsset = useMemo(
     () => assets.find(asset => asset.id === selectedAssetId) ?? null,
     [assets, selectedAssetId]
@@ -1280,6 +1281,7 @@ const App = () => {
   });
   const [uploadModal, setUploadModal] = useState(false);
   const [batchUploadMode, setBatchUploadMode] = useState(false);
+  const [singleUploadMode, setSingleUploadMode] = useState(false);
   const [newAsset, setNewAsset] = useState<{
     title: string;
     eventId: string;
@@ -2487,7 +2489,9 @@ const App = () => {
       : (batchUploadMode ? [ALL_TONE_ID] : []);
     if (effectiveSkinTones.length === 0) return;
 
-    const allowedFiles = newAsset.files.filter(file => file.type === 'image/gif' || file.type === 'video/mp4');
+    const allowedFiles = newAsset.files
+      .filter(file => file.type === 'image/gif' || file.type === 'video/mp4')
+      .slice(0, singleUploadMode ? 1 : undefined);
     const skipped = newAsset.files.length - allowedFiles.length;
 
     if (allowedFiles.length === 0) {
@@ -3108,6 +3112,12 @@ const App = () => {
       const message = `${actor} updated ${ids.length} text item(s) to ${STATUS_LABELS[status]}.`;
       void sendSlackNotification(message);
     }
+  };
+
+  const openAssetDetail = (assetId: string, list: UiAsset[]) => {
+    setSelectedAssetId(assetId);
+    setAssetNavIds(list.map(asset => asset.id));
+    setCurrentView('asset-detail');
   };
 
   const requestReviewNotes = (status: AssetStatus) => {
@@ -3944,7 +3954,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               <div 
                 key={asset.id}
                 className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer mb-2 transition-colors"
-                onClick={() => { setSelectedAssetId(asset.id); setCurrentView('asset-detail'); }}
+                onClick={() => openAssetDetail(asset.id, assets.filter(item => item.status === 'TO_REVIEW'))}
               >
                 <AssetPreview asset={asset} className="w-12 h-12 rounded-lg" />
                 <div className="flex-1 min-w-0">
@@ -3983,7 +3993,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               <div 
                 key={asset.id}
                 className="flex items-center gap-3 p-3 rounded-lg hover:bg-yellow-50 cursor-pointer mb-2 transition-colors"
-                onClick={() => { setSelectedAssetId(asset.id); setCurrentView('asset-detail'); }}
+                onClick={() => openAssetDetail(asset.id, assets.filter(item => item.status === 'HOLD'))}
               >
                 <AssetPreview asset={asset} className="w-12 h-12 rounded-lg" />
                 <div className="flex-1 min-w-0">
@@ -4090,7 +4100,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
             <div 
               key={asset.id} 
               className="relative border-2 border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-blue-300 transition-all cursor-pointer group"
-              onClick={() => { setSelectedAssetId(asset.id); setCurrentView('asset-detail'); }}
+              onClick={() => openAssetDetail(asset.id, filteredAssets)}
             >
               <label
                 className="absolute left-3 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border-2 border-gray-200 bg-white shadow-sm"
@@ -4125,6 +4135,9 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
   // Asset Detail View
   const renderAssetDetailView = () => {
     if (!selectedAsset) return null;
+    const assetNavIndex = assetNavIds.indexOf(selectedAsset.id);
+    const hasPrev = assetNavIndex > 0;
+    const hasNext = assetNavIndex >= 0 && assetNavIndex < assetNavIds.length - 1;
 
     const handleSubmitReview = async () => {
       if (!reviewAction) return;
@@ -4143,12 +4156,35 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
 
     return (
       <div className="max-w-6xl mx-auto space-y-6">
-        <button 
-          onClick={() => setCurrentView('queue')}
-          className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-2"
-        >
-          Back to Queue
-        </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button 
+            onClick={() => setCurrentView('queue')}
+            className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-2"
+          >
+            Back to Queue
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => hasPrev && setSelectedAssetId(assetNavIds[assetNavIndex - 1])}
+              disabled={!hasPrev}
+              className="rounded-full border-2 border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => hasNext && setSelectedAssetId(assetNavIds[assetNavIndex + 1])}
+              disabled={!hasNext}
+              className="rounded-full border-2 border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+            {assetNavIndex >= 0 && (
+              <span className="text-xs text-gray-500">
+                {assetNavIndex + 1} / {assetNavIds.length}
+              </span>
+            )}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
@@ -5545,8 +5581,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                         key={asset.id}
                         className="rounded-2xl border-2 border-gray-200 bg-white p-4 hover:border-blue-300 hover:shadow-lg transition-all cursor-pointer"
                         onClick={() => {
-                          setSelectedAssetId(asset.id);
-                          setCurrentView('asset-detail');
+                          openAssetDetail(asset.id, filteredEventAssets);
                           closeEventModal();
                         }}
                       >
@@ -5807,6 +5842,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 <button 
                   onClick={() => {
                     setBatchUploadMode(false);
+                    setSingleUploadMode(false);
                     setUploadModal(true);
                   }}
                   className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors shadow-sm w-full md:w-auto"
@@ -5888,7 +5924,13 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-2xl font-bold">Upload Assets</h2>
                 <button
-                  onClick={() => setBatchUploadMode(prev => !prev)}
+                  onClick={() => {
+                    setBatchUploadMode(prev => {
+                      const next = !prev;
+                      if (next) setSingleUploadMode(false);
+                      return next;
+                    });
+                  }}
                   className={`rounded-full border-2 px-3 py-1 text-xs font-semibold transition-colors ${
                     batchUploadMode
                       ? 'border-blue-600 bg-blue-50 text-blue-700'
@@ -5903,6 +5945,31 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   ? 'Skip details now and organize after the upload.'
                   : 'Add details now or switch to quick batch.'}
               </p>
+              {!batchUploadMode && (
+                <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-gray-600">
+                  <span className="uppercase tracking-[0.2em] text-gray-400">Mode</span>
+                  <button
+                    onClick={() => setSingleUploadMode(true)}
+                    className={`rounded-full border-2 px-2.5 py-1 ${
+                      singleUploadMode
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}
+                  >
+                    Single
+                  </button>
+                  <button
+                    onClick={() => setSingleUploadMode(false)}
+                    className={`rounded-full border-2 px-2.5 py-1 ${
+                      !singleUploadMode
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}
+                  >
+                    Multi
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
@@ -6027,7 +6094,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 <input
                   type="file"
                   accept="image/gif,video/mp4"
-                  multiple
+                  multiple={!singleUploadMode}
                   className="hidden"
                   onChange={(e) => setNewAsset({ ...newAsset, files: Array.from(e.target.files ?? []) })}
                 />
@@ -6064,11 +6131,12 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
 
             <div className="px-6 pb-6 pt-4 border-t border-gray-100 flex gap-3">
               <button 
-                onClick={() => {
-                  setUploadModal(false);
-                  setBatchUploadMode(false);
-                  setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
-                }}
+                  onClick={() => {
+                    setUploadModal(false);
+                    setBatchUploadMode(false);
+                    setSingleUploadMode(false);
+                    setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
+                  }}
                 className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl hover:bg-gray-50 font-medium transition-colors"
               >
                 Cancel
