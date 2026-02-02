@@ -114,6 +114,7 @@ const TEXT_CATEGORIES = ['Idea', 'Prompt', 'Copy', 'Script', 'Caption', 'Notes']
 const TEXT_SNIPPET_LENGTH = 180;
 const UNASSIGNED_GROUP_ID = 'unassigned';
 const UNASSIGNED_SECTION_ID = 'unassigned-section';
+const ALL_TONE_ID: SkinTone = 'ALL';
 const TAG_BADGE_STYLES: Record<string, string> = {
   funny: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   general: 'bg-rose-100 text-rose-700 border-rose-200'
@@ -162,12 +163,17 @@ const LEGACY_TONE_MAP: Record<string, SkinTone> = {
   'medium-brown': 'MEDIUM_BROWN',
   'dark-brown': 'DARK_BROWN',
   deep: 'DEEP',
+  all: 'ALL',
+  'all-tones': 'ALL',
+  neutral: 'ALL',
+  'tone-neutral': 'ALL',
   FAIR: 'FAIR',
   LIGHT: 'LIGHT',
   OLIVE: 'OLIVE',
   MEDIUM_BROWN: 'MEDIUM_BROWN',
   DARK_BROWN: 'DARK_BROWN',
-  DEEP: 'DEEP'
+  DEEP: 'DEEP',
+  ALL: 'ALL'
 };
 
 const normalizeStatus = (value: unknown): AssetStatus | null => {
@@ -217,6 +223,8 @@ const normalizeStoredAssets = (input: unknown): UiAsset[] => {
         ? data.previewColor
         : typeof data.preview_color === 'string'
         ? data.preview_color
+        : skinTone === ALL_TONE_ID
+        ? '#94a3b8'
         : SKIN_TONES.find(tone => tone.id === skinTone)?.color ?? '#ccc';
 
       const rawMediaUrl = typeof data.mediaUrl === 'string'
@@ -2124,6 +2132,14 @@ const App = () => {
 
   const eventLookup = useMemo(() => new Map(events.map(event => [event.id, event])), [events]);
   const toneLookup = useMemo(() => new Map(SKIN_TONES.map(tone => [tone.id, tone])), []);
+  const getToneMeta = (toneId: SkinTone) => {
+    const tone = toneLookup.get(toneId);
+    if (tone) return tone;
+    if (toneId === ALL_TONE_ID) {
+      return { id: ALL_TONE_ID, name: 'All tones', color: '#94a3b8' };
+    }
+    return { id: toneId, name: 'Tone', color: '#94a3b8' };
+  };
   const textGroupLookup = useMemo(
     () => new Map(textGroups.map(group => [group.id, group])),
     [textGroups]
@@ -2335,7 +2351,7 @@ const App = () => {
   const buildDownloadName = (asset: UiAsset, eventName?: string) => {
     const nameSegments = [
       eventName ?? eventLookup.get(asset.eventId)?.name ?? 'event',
-      toneLookup.get(asset.skinTone)?.name ?? 'tone',
+      getToneMeta(asset.skinTone).name,
       asset.title || 'asset'
     ];
     const safeBase = sanitizeFileName(nameSegments.join(' ')) || asset.id;
@@ -2466,7 +2482,7 @@ const App = () => {
 
     const effectiveSkinTones = newAsset.skinTones.length > 0
       ? newAsset.skinTones
-      : (batchUploadMode ? SKIN_TONES.map(tone => tone.id) : []);
+      : (batchUploadMode ? [ALL_TONE_ID] : []);
     if (effectiveSkinTones.length === 0) return;
 
     const allowedFiles = newAsset.files.filter(file => file.type === 'image/gif' || file.type === 'video/mp4');
@@ -2521,8 +2537,8 @@ const App = () => {
           }
 
           const titleBase = newAsset.title?.trim();
-          const tone = toneLookup.get(toneId);
-          const toneLabel = selectedTones.length > 1 ? ` - ${tone?.name ?? 'Tone'}` : '';
+          const tone = getToneMeta(toneId);
+          const toneLabel = selectedTones.length > 1 && toneId !== ALL_TONE_ID ? ` - ${tone.name}` : '';
           const titleSuffix = allowedFiles.length > 1 ? `#${fileIndex + 1}` : '';
           const title = titleBase
             ? `${titleBase} ${titleSuffix}`.trim() + toneLabel
@@ -2540,7 +2556,7 @@ const App = () => {
             version: 1,
             notesRefinement: '',
             notesIdeas: '',
-            previewColor: tone?.color ?? '#ccc',
+            previewColor: tone.color ?? '#ccc',
             mediaUrl,
             mediaType: file.type,
             mediaStorage: usedRemoteStorage ? 'object' : mediaStorage,
@@ -2639,6 +2655,30 @@ const App = () => {
       alert('Sign in to sync approvals to the team feed.');
     }
     setSelectedAssetId(null);
+  };
+
+  const handleToneUpdate = async (assetId: string, skinTone: SkinTone) => {
+    const current = assets.find(asset => asset.id === assetId);
+    if (!current) return;
+    const tone = getToneMeta(skinTone);
+    const updatedAt = new Date().toISOString();
+    const updatedAsset: UiAsset = {
+      ...current,
+      skinTone,
+      previewColor: tone.color ?? current.previewColor,
+      updatedAt
+    };
+
+    setAssets(prev => prev.map(asset => (asset.id === assetId ? updatedAsset : asset)));
+    const authToken = await getAuthToken(session);
+    if (authToken) {
+      const synced = await saveAssetsToApi([updatedAsset], authToken);
+      if (!synced) {
+        alert('Update saved locally but could not sync to the team feed.');
+      }
+    } else {
+      alert('Sign in to sync tone updates to the team feed.');
+    }
   };
 
   const handleDeleteAsset = async (assetId: string) => {
@@ -3601,7 +3641,7 @@ const App = () => {
     const list = assets.filter(asset => {
       if (filters.status && asset.status !== filters.status) return false;
       if (filters.eventId && asset.eventId !== filters.eventId) return false;
-      if (filters.skinTone && asset.skinTone !== filters.skinTone) return false;
+      if (filters.skinTone && asset.skinTone !== filters.skinTone && asset.skinTone !== ALL_TONE_ID) return false;
       return true;
     });
 
@@ -4000,7 +4040,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-5 h-5 rounded" style={{ backgroundColor: asset.previewColor }}></div>
-                  <span className="text-xs text-gray-500">{toneLookup.get(asset.skinTone)?.name}</span>
+                  <span className="text-xs text-gray-500">{getToneMeta(asset.skinTone).name}</span>
                 </div>
                 <StatusBadge status={asset.status} />
               </div>
@@ -4124,9 +4164,24 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 <div>
                   <div className="text-gray-500 mb-1">Skin Tone</div>
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-lg shadow-sm" style={{ backgroundColor: selectedAsset.previewColor }}></div>
-                    <span className="font-semibold text-gray-900">{toneLookup.get(selectedAsset.skinTone)?.name}</span>
+                    <div
+                      className="w-6 h-6 rounded-lg shadow-sm"
+                      style={{ backgroundColor: getToneMeta(selectedAsset.skinTone).color }}
+                    ></div>
+                    <span className="font-semibold text-gray-900">{getToneMeta(selectedAsset.skinTone).name}</span>
                   </div>
+                  {currentRole === 'creator' && (
+                    <select
+                      className="mt-3 w-full rounded-lg border-2 border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 focus:border-blue-500 focus:outline-none"
+                      value={selectedAsset.skinTone}
+                      onChange={(e) => handleToneUpdate(selectedAsset.id, e.target.value as SkinTone)}
+                    >
+                      <option value={ALL_TONE_ID}>All tones</option>
+                      {SKIN_TONES.map(tone => (
+                        <option key={tone.id} value={tone.id}>{tone.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <div className="text-gray-500 mb-1">Uploaded by</div>
@@ -5431,7 +5486,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                             <StatusBadge status={asset.status} />
                           </div>
                           <div className="flex items-center justify-between text-xs text-gray-500">
-                            <span>{toneLookup.get(asset.skinTone)?.name}</span>
+                            <span>{getToneMeta(asset.skinTone).name}</span>
                             <span>{fileLabel}</span>
                           </div>
                           {!asset.mediaUrl && asset.mediaStorage === 'object' && (
@@ -5832,7 +5887,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
 
               {batchUploadMode ? (
                 <div className="rounded-xl border-2 border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-                  Batch mode assigns uploads to all skin tones by default so they show up everywhere. You can refine tones later.
+                  Batch mode uploads one item per file and tags it as “All tones” (no duplicates). You can refine tones later.
                   <button
                     type="button"
                     onClick={() => setBatchUploadMode(false)}

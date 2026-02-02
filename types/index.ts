@@ -1,4 +1,4 @@
-export type SkinTone = 'FAIR' | 'LIGHT' | 'OLIVE' | 'MEDIUM_BROWN' | 'DARK_BROWN' | 'DEEP';
+export type SkinTone = 'FAIR' | 'LIGHT' | 'OLIVE' | 'MEDIUM_BROWN' | 'DARK_BROWN' | 'DEEP' | 'ALL';
 export type AssetStatus = 'TO_REVIEW' | 'APPROVED' | 'HOLD' | 'REJECTED';
 export type Role = 'CREATOR' | 'REVIEWER' | 'ADMIN';
 
