@@ -3653,21 +3653,44 @@ const App = () => {
     });
   }, [textItems, textFilters, textGroupLookup]);
 
-  const getDaysUntil = (dateStr: string) => {
-    const target = new Date(dateStr);
-    const now = new Date();
-    const diff = Math.ceil((target - now) / (1000 * 60 * 60 * 24));
-    return diff;
-  };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_EVENT_WINDOW_DAYS = 30;
+
+const toDateOrNull = (value?: string | null) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const getEventTiming = (event: { startDate: string; endDate?: string | null }) => {
+  const now = new Date();
+  const start = toDateOrNull(event.startDate);
+  const end = toDateOrNull(event.endDate ?? null);
+  if (!start) return { daysUntil: Number.POSITIVE_INFINITY, isOngoing: false };
+
+  const daysUntil = Math.ceil((start.getTime() - now.getTime()) / DAY_MS);
+  if (end) {
+    const isOngoing = now >= start && now <= end;
+    return { daysUntil, isOngoing };
+  }
+
+  const daysSinceStart = Math.floor((now.getTime() - start.getTime()) / DAY_MS);
+  const isOngoing = daysSinceStart >= 0 && daysSinceStart <= DEFAULT_EVENT_WINDOW_DAYS;
+  return { daysUntil, isOngoing };
+};
 
   const upcomingEventChoices = useMemo(() => (
     events
-      .map(event => ({
-        ...event,
-        daysUntil: getDaysUntil(event.startDate)
-      }))
-      .filter(event => event.daysUntil >= 0)
-      .sort((a, b) => a.daysUntil - b.daysUntil)
+      .map(event => {
+        const timing = getEventTiming(event);
+        return { ...event, daysUntil: timing.daysUntil, isOngoing: timing.isOngoing };
+      })
+      .filter(event => event.isOngoing || event.daysUntil >= 0)
+      .sort((a, b) => {
+        if (a.isOngoing && !b.isOngoing) return -1;
+        if (!a.isOngoing && b.isOngoing) return 1;
+        return a.daysUntil - b.daysUntil;
+      })
       .slice(0, 5)
   ), [events]);
 
@@ -3675,15 +3698,21 @@ const App = () => {
     events
       .map(event => {
         const approvedCount = assets.filter(asset => asset.eventId === event.id && asset.status === 'APPROVED').length;
+        const timing = getEventTiming(event);
         return {
           ...event,
-          daysUntil: getDaysUntil(event.startDate),
+          daysUntil: timing.daysUntil,
+          isOngoing: timing.isOngoing,
           approved: approvedCount,
           progress: (approvedCount / event.totalTarget) * 100
         };
       })
-      .filter(event => event.daysUntil > 0 && event.daysUntil <= 90)
-      .sort((a, b) => a.daysUntil - b.daysUntil)
+      .filter(event => event.isOngoing || (event.daysUntil > 0 && event.daysUntil <= 90))
+      .sort((a, b) => {
+        if (a.isOngoing && !b.isOngoing) return -1;
+        if (!a.isOngoing && b.isOngoing) return 1;
+        return a.daysUntil - b.daysUntil;
+      })
       .slice(0, 6)
   );
 
@@ -3743,7 +3772,7 @@ const App = () => {
         {/* Upcoming Events */}
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-2xl font-bold text-gray-900">Upcoming Events</h3>
+            <h3 className="text-2xl font-bold text-gray-900">Upcoming & Ongoing Events</h3>
             <button 
               onClick={() => setCurrentView('events')}
               className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-2"
@@ -3778,7 +3807,7 @@ const App = () => {
                       urgency === 'warning' ? 'bg-yellow-100 text-yellow-700' :
                       'bg-green-100 text-green-700'
                     }`}>
-                      {event.daysUntil}d
+                      {event.isOngoing ? 'Ongoing' : `${event.daysUntil}d`}
                     </div>
                   </div>
 
@@ -4218,7 +4247,9 @@ const App = () => {
         {events.map(event => {
           const eventAssets = assets.filter(asset => asset.eventId === event.id && asset.status === 'APPROVED');
           const progress = (eventAssets.length / event.totalTarget) * 100;
-          const daysUntil = getDaysUntil(event.startDate);
+          const timing = getEventTiming(event);
+          const daysUntil = timing.daysUntil;
+          const isOngoing = timing.isOngoing;
           
           const toneCounts = SKIN_TONES.map(tone => ({
             tone,
@@ -4240,22 +4271,34 @@ const App = () => {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <div className={`px-3 py-1.5 rounded-full text-xs font-bold ${
+                    isOngoing ? 'bg-blue-100 text-blue-700' :
                     daysUntil < 0 ? 'bg-gray-100 text-gray-500' :
                     daysUntil < 30 ? 'bg-red-100 text-red-700' :
                     daysUntil < 90 ? 'bg-yellow-100 text-yellow-700' :
                     'bg-green-100 text-green-700'
                   }`}>
-                    {daysUntil < 0 ? 'Past' : `${daysUntil}d`}
+                    {isOngoing ? 'Ongoing' : (daysUntil < 0 ? 'Past' : `${daysUntil}d`)}
                   </div>
-                  <button
-                    onClick={(eventClick) => {
-                      eventClick.stopPropagation();
-                      openEventEditor(event);
-                    }}
-                    className="text-xs font-semibold text-blue-600 hover:text-blue-700"
-                  >
-                    Edit
-                  </button>
+                  <div className="flex flex-col items-end gap-1">
+                    <button
+                      onClick={(eventClick) => {
+                        eventClick.stopPropagation();
+                        openEventEditor(event);
+                      }}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={(eventClick) => {
+                        eventClick.stopPropagation();
+                        startUploadForEvent(event.id);
+                      }}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                    >
+                      Batch upload
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -5199,7 +5242,9 @@ const App = () => {
   const renderEventModal = () => {
     if (!eventModalOpen || !selectedEvent) return null;
 
-    const daysUntil = getDaysUntil(selectedEvent.startDate);
+    const timing = getEventTiming(selectedEvent);
+    const daysUntil = timing.daysUntil;
+    const isOngoing = timing.isOngoing;
     const approvedCount = eventStatusCounts.APPROVED;
     const progress = (approvedCount / selectedEvent.totalTarget) * 100;
     const statusTotals = ASSET_STATUSES.map(status => ({
@@ -5230,7 +5275,7 @@ const App = () => {
               <div className="mt-1 text-sm text-gray-500">
                 {new Date(selectedEvent.startDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
                 <span className="ml-3 rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">
-                  {daysUntil < 0 ? 'Past' : `${daysUntil} days out`}
+                  {isOngoing ? 'Ongoing' : (daysUntil < 0 ? 'Past' : `${daysUntil} days out`)}
                 </span>
               </div>
             </div>
@@ -5241,7 +5286,7 @@ const App = () => {
                   onClick={() => startUploadForEvent(selectedEvent.id)}
                   className="rounded-xl border-2 border-blue-200 px-4 py-2 text-sm font-semibold text-blue-600 hover:border-blue-400 hover:text-blue-700"
                 >
-                  Upload to event
+                  Batch upload to event
                 </button>
               )}
               <button
@@ -5734,7 +5779,7 @@ const App = () => {
                       >
                         <div className="text-sm font-semibold">{event.name}</div>
                         <div className="text-xs text-gray-400">
-                          {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {event.daysUntil}d
+                          {new Date(event.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {event.isOngoing ? 'Ongoing' : `${event.daysUntil}d`}
                         </div>
                       </button>
                     );
@@ -5819,7 +5864,7 @@ const App = () => {
                 <p className="text-sm font-medium text-gray-600">
                   {newAsset.files.length > 0 ? `${newAsset.files.length} file(s) ready` : 'Click to browse for files'}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">GIF or MP4; small files store inline previews</p>
+                <p className="text-xs text-gray-400 mt-1">GIF or MP4; select multiple files for batch uploads</p>
                 {!R2_PUBLIC_BASE_URL && (
                   <p className="text-xs text-amber-600 mt-2">
                     Cloud storage not configured. Uploads will stay local until R2 is set.
