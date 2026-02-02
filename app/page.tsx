@@ -1269,6 +1269,7 @@ const App = () => {
     skinTone: ''
   });
   const [uploadModal, setUploadModal] = useState(false);
+  const [batchUploadMode, setBatchUploadMode] = useState(false);
   const [newAsset, setNewAsset] = useState<{
     title: string;
     eventId: string;
@@ -2453,6 +2454,7 @@ const App = () => {
 
   const startUploadForEvent = (eventId: string) => {
     setNewAsset(prev => ({ ...prev, eventId }));
+    setBatchUploadMode(true);
     setUploadModal(true);
     setEventModalOpen(false);
     setEventModalExpanded(false);
@@ -2460,7 +2462,12 @@ const App = () => {
 
   const handleUpload = async () => {
     if (uploadLockRef.current) return;
-    if (!newAsset.eventId || newAsset.skinTones.length === 0 || newAsset.files.length === 0) return;
+    if (!newAsset.eventId || newAsset.files.length === 0) return;
+
+    const effectiveSkinTones = newAsset.skinTones.length > 0
+      ? newAsset.skinTones
+      : (batchUploadMode ? SKIN_TONES.map(tone => tone.id) : []);
+    if (effectiveSkinTones.length === 0) return;
 
     const allowedFiles = newAsset.files.filter(file => file.type === 'image/gif' || file.type === 'video/mp4');
     const skipped = newAsset.files.length - allowedFiles.length;
@@ -2481,7 +2488,7 @@ const App = () => {
       let remoteFailures = 0;
       const authToken = await getAuthToken(session);
       const useRemoteStorage = Boolean(R2_PUBLIC_BASE_URL && authToken);
-      const selectedTones = [...newAsset.skinTones];
+      const selectedTones = [...effectiveSkinTones];
 
       const uploadJobs = allowedFiles.flatMap((file, fileIndex) => (
         selectedTones.map((toneId) => async () => {
@@ -2574,6 +2581,7 @@ const App = () => {
       }
 
       setUploadModal(false);
+      setBatchUploadMode(false);
       setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
     } finally {
       uploadLockRef.current = false;
@@ -5671,7 +5679,10 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               
               {currentRole === 'creator' && (
                 <button 
-                  onClick={() => setUploadModal(true)}
+                  onClick={() => {
+                    setBatchUploadMode(false);
+                    setUploadModal(true);
+                  }}
                   className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors shadow-sm w-full md:w-auto"
                 >
                   <Upload className="w-4 h-4" />
@@ -5746,20 +5757,41 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
       {/* Upload Modal */}
       {uploadModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 max-w-lg w-full shadow-2xl">
-            <h2 className="text-2xl font-bold mb-6">Upload Assets</h2>
-            
-            <div className="space-y-5">
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">Title (optional)</label>
-                <input 
-                  type="text"
-                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
-                  value={newAsset.title}
-                  onChange={(e) => setNewAsset({...newAsset, title: e.target.value})}
-                  placeholder="Asset title"
-                />
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-2xl font-bold">Upload Assets</h2>
+                <button
+                  onClick={() => setBatchUploadMode(prev => !prev)}
+                  className={`rounded-full border-2 px-3 py-1 text-xs font-semibold transition-colors ${
+                    batchUploadMode
+                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  {batchUploadMode ? 'Quick batch on' : 'Quick batch off'}
+                </button>
               </div>
+              <p className="mt-2 text-sm text-gray-500">
+                {batchUploadMode
+                  ? 'Skip details now and organize after the upload.'
+                  : 'Add details now or switch to quick batch.'}
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {!batchUploadMode && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Title (optional)</label>
+                  <input 
+                    type="text"
+                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
+                    value={newAsset.title}
+                    onChange={(e) => setNewAsset({...newAsset, title: e.target.value})}
+                    placeholder="Asset title"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">Event *</label>
@@ -5798,59 +5830,72 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">Skin Tones *</label>
-                <div className="flex flex-wrap gap-2 mb-3">
+              {batchUploadMode ? (
+                <div className="rounded-xl border-2 border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                  Batch mode assigns uploads to all skin tones by default so they show up everywhere. You can refine tones later.
                   <button
                     type="button"
-                    onClick={() => setNewAsset(prev => ({
-                      ...prev,
-                      skinTones: allTonesSelected ? [] : SKIN_TONES.map(tone => tone.id)
-                    }))}
-                    className={`rounded-full border-2 px-3 py-1 text-xs font-semibold transition-colors ${
-                      allTonesSelected
-                        ? 'border-gray-900 bg-gray-900 text-white'
-                        : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                    }`}
+                    onClick={() => setBatchUploadMode(false)}
+                    className="ml-2 underline text-blue-800"
                   >
-                    All tones
+                    Choose tones now
                   </button>
-                  {newAsset.skinTones.length > 0 && !allTonesSelected && (
-                    <span className="text-xs text-gray-500 self-center">
-                      {newAsset.skinTones.length} selected
-                    </span>
-                  )}
                 </div>
-                <div className="flex gap-3 overflow-x-auto pb-2">
-                  {SKIN_TONES.map(tone => {
-                    const selected = newAsset.skinTones.includes(tone.id);
-                    return (
-                      <button
-                        key={tone.id}
-                        type="button"
-                        onClick={() => setNewAsset(prev => {
-                          const exists = prev.skinTones.includes(tone.id);
-                          const skinTones = exists
-                            ? prev.skinTones.filter(id => id !== tone.id)
-                            : [...prev.skinTones, tone.id];
-                          return { ...prev, skinTones };
-                        })}
-                        className={`flex flex-col items-center gap-2 min-w-[70px] rounded-xl border-2 px-3 py-2 transition-all ${
-                          selected
-                            ? 'border-gray-900 text-gray-900'
-                            : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                        }`}
-                      >
-                        <span
-                          className={`h-10 w-10 rounded-full shadow-inner ${selected ? 'ring-2 ring-gray-900 ring-offset-2' : 'ring-1 ring-white/60'}`}
-                          style={{ backgroundColor: tone.color }}
-                        ></span>
-                        <span className="text-[11px] font-semibold leading-tight text-center">{tone.name}</span>
-                      </button>
-                    );
-                  })}
+              ) : (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Skin Tones *</label>
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setNewAsset(prev => ({
+                        ...prev,
+                        skinTones: allTonesSelected ? [] : SKIN_TONES.map(tone => tone.id)
+                      }))}
+                      className={`rounded-full border-2 px-3 py-1 text-xs font-semibold transition-colors ${
+                        allTonesSelected
+                          ? 'border-gray-900 bg-gray-900 text-white'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      All tones
+                    </button>
+                    {newAsset.skinTones.length > 0 && !allTonesSelected && (
+                      <span className="text-xs text-gray-500 self-center">
+                        {newAsset.skinTones.length} selected
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-3 overflow-x-auto pb-2">
+                    {SKIN_TONES.map(tone => {
+                      const selected = newAsset.skinTones.includes(tone.id);
+                      return (
+                        <button
+                          key={tone.id}
+                          type="button"
+                          onClick={() => setNewAsset(prev => {
+                            const exists = prev.skinTones.includes(tone.id);
+                            const skinTones = exists
+                              ? prev.skinTones.filter(id => id !== tone.id)
+                              : [...prev.skinTones, tone.id];
+                            return { ...prev, skinTones };
+                          })}
+                          className={`flex flex-col items-center gap-2 min-w-[70px] rounded-xl border-2 px-3 py-2 transition-all ${
+                            selected
+                              ? 'border-gray-900 text-gray-900'
+                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                          }`}
+                        >
+                          <span
+                            className={`h-10 w-10 rounded-full shadow-inner ${selected ? 'ring-2 ring-gray-900 ring-offset-2' : 'ring-1 ring-white/60'}`}
+                            style={{ backgroundColor: tone.color }}
+                          ></span>
+                          <span className="text-[11px] font-semibold leading-tight text-center">{tone.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <label className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors cursor-pointer block">
                 <input
@@ -5889,25 +5934,26 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   </div>
                 )}
               </label>
+            </div>
 
-              <div className="flex gap-3 pt-2">
-                <button 
-                  onClick={() => {
-                    setUploadModal(false);
-                    setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
-                  }}
-                  className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl hover:bg-gray-50 font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={() => void handleUpload()}
-                  disabled={isUploading || !newAsset.eventId || newAsset.skinTones.length === 0 || newAsset.files.length === 0}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors"
-                >
-                  {isUploading ? 'Uploading...' : `Upload ${newAsset.files.length > 1 ? `${newAsset.files.length} files` : ''}`}
-                </button>
-              </div>
+            <div className="px-6 pb-6 pt-4 border-t border-gray-100 flex gap-3">
+              <button 
+                onClick={() => {
+                  setUploadModal(false);
+                  setBatchUploadMode(false);
+                  setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
+                }}
+                className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl hover:bg-gray-50 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => void handleUpload()}
+                disabled={isUploading || !newAsset.eventId || newAsset.files.length === 0 || (!batchUploadMode && newAsset.skinTones.length === 0)}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium transition-colors"
+              >
+                {isUploading ? 'Uploading...' : `Upload ${newAsset.files.length > 1 ? `${newAsset.files.length} files` : ''}`}
+              </button>
             </div>
           </div>
         </div>
