@@ -1241,6 +1241,7 @@ const App = () => {
   const [events, setEvents] = useState<EventRecord[]>(INITIAL_EVENTS);
   const [assets, setAssets] = useState<UiAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const selectedAsset = useMemo(
     () => assets.find(asset => asset.id === selectedAssetId) ?? null,
     [assets, selectedAssetId]
@@ -1256,6 +1257,7 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingText, setIsSavingText] = useState(false);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+  const [batchDeletingAssets, setBatchDeletingAssets] = useState(false);
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetsSyncError, setAssetsSyncError] = useState('');
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -2496,46 +2498,35 @@ const App = () => {
       alert(`Skipped ${skipped} file(s) that were not GIF or MP4.`);
     }
 
+    const authToken = await getAuthToken(session);
+    if (!R2_PUBLIC_BASE_URL || !authToken) {
+      alert('Cloud storage is required for team uploads. Please sign in and configure R2 before uploading.');
+      return;
+    }
+
     uploadLockRef.current = true;
     setIsUploading(true);
     try {
       const createdAt = new Date().toISOString();
       const actor = actorLabel;
-      let remoteFailures = 0;
-      const authToken = await getAuthToken(session);
-      const useRemoteStorage = Boolean(R2_PUBLIC_BASE_URL && authToken);
       const selectedTones = [...effectiveSkinTones];
 
-      const uploadJobs = allowedFiles.flatMap((file, fileIndex) => (
-        selectedTones.map((toneId) => async () => {
-          let mediaUrl = '';
-          let mediaStorage: 'inline' | 'object' = 'object';
-          let usedRemoteStorage = false;
+      const assetsToAdd: UiAsset[] = [];
+      let uploadFailures = 0;
 
-          if (useRemoteStorage) {
-            try {
-              mediaUrl = await uploadFileToR2(file, newAsset.eventId, authToken);
-              usedRemoteStorage = true;
-            } catch (error) {
-              remoteFailures += 1;
-              console.log('Remote upload failed, falling back to local preview.', error);
-            }
-          }
+      for (let fileIndex = 0; fileIndex < allowedFiles.length; fileIndex += 1) {
+        const file = allowedFiles[fileIndex];
+        let mediaUrl = '';
+        try {
+          mediaUrl = await uploadFileToR2(file, newAsset.eventId, authToken);
+        } catch (error) {
+          uploadFailures += 1;
+          console.log('Remote upload failed, skipping file.', error);
+          continue;
+        }
 
-          if (!mediaUrl && file.size <= MAX_INLINE_BYTES) {
-            try {
-              mediaUrl = await readFileAsDataUrl(file);
-              mediaStorage = 'inline';
-            } catch (error) {
-              console.log('Inline upload failed, using local preview only.', error);
-            }
-          }
-
-          if (!mediaUrl) {
-            mediaUrl = URL.createObjectURL(file);
-            mediaStorage = 'object';
-          }
-
+        for (const toneId of selectedTones) {
+          const mediaStorage: 'inline' | 'object' = 'object';
           const titleBase = newAsset.title?.trim();
           const tone = getToneMeta(toneId);
           const toneLabel = selectedTones.length > 1 && toneId !== ALL_TONE_ID ? ` - ${tone.name}` : '';
@@ -2544,7 +2535,7 @@ const App = () => {
             ? `${titleBase} ${titleSuffix}`.trim() + toneLabel
             : `${file.name.replace(/\\.[^/.]+$/, '') || 'New Asset'}${toneLabel}`;
 
-          return {
+          assetsToAdd.push({
             id: buildAssetId(),
             title,
             eventId: newAsset.eventId,
@@ -2559,27 +2550,26 @@ const App = () => {
             previewColor: tone.color ?? '#ccc',
             mediaUrl,
             mediaType: file.type,
-            mediaStorage: usedRemoteStorage ? 'object' : mediaStorage,
+            mediaStorage,
             fileName: file.name,
             fileSize: file.size
-          } satisfies UiAsset;
-        })
-      ));
+          });
+        }
+      }
 
-      const assetsToAdd = await Promise.all(uploadJobs.map(job => job()));
+      if (assetsToAdd.length === 0) {
+        alert('Upload failed. No files were saved to cloud storage.');
+        return;
+      }
 
-      if (remoteFailures > 0 && useRemoteStorage) {
-        alert('Some files could not be uploaded to cloud storage. Local previews were saved instead.');
+      if (uploadFailures > 0) {
+        alert(`Uploaded ${assetsToAdd.length} assets. ${uploadFailures} file(s) failed to upload to cloud storage.`);
       }
 
       setAssets(prev => [...assetsToAdd, ...prev]);
-      if (authToken) {
-        const saved = await saveAssetsToApi(assetsToAdd, authToken);
-        if (!saved) {
-          alert('Assets saved locally but could not sync to the team feed.');
-        }
-      } else {
-        alert('Sign in to sync uploads to the team feed.');
+      const saved = await saveAssetsToApi(assetsToAdd, authToken);
+      if (!saved) {
+        alert('Assets saved locally but could not sync to the team feed.');
       }
 
       const activityEntries = assetsToAdd.map(asset => buildActivityEntry({
@@ -2707,6 +2697,42 @@ const App = () => {
     } finally {
       setDeletingAssetId(null);
     }
+  };
+
+  const toggleAssetSelection = (assetId: string) => {
+    setSelectedAssetIds(prev => (
+      prev.includes(assetId) ? prev.filter(id => id !== assetId) : [...prev, assetId]
+    ));
+  };
+
+  const handleSelectAllAssets = () => {
+    const allIds = filteredAssets.map(asset => asset.id);
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedAssetIds.includes(id));
+    setSelectedAssetIds(allSelected ? [] : allIds);
+  };
+
+  const handleBatchDeleteAssets = async () => {
+    if (batchDeletingAssets || selectedAssetIds.length === 0) return;
+    const confirmed = window.confirm(`Delete ${selectedAssetIds.length} assets? This removes them for everyone.`);
+    if (!confirmed) return;
+
+    setBatchDeletingAssets(true);
+    const idsToDelete = new Set(selectedAssetIds);
+    setAssets(prev => prev.filter(asset => !idsToDelete.has(asset.id)));
+    setActivityLogs(prev => prev.filter(entry => !(entry.subjectType === 'asset' && idsToDelete.has(entry.subjectId))));
+    setSelectedAssetIds([]);
+
+    const authToken = await getAuthToken(session);
+    if (authToken) {
+      const results = await Promise.all(selectedAssetIds.map(id => deleteAssetFromApi(id, authToken)));
+      if (results.some(result => !result)) {
+        alert('Some assets were removed locally but failed to sync to the team feed.');
+      }
+    } else {
+      alert('Sign in to delete assets from the team feed.');
+    }
+
+    setBatchDeletingAssets(false);
   };
 
   const buildTextDraft = (item?: TextItem) => ({
@@ -3650,6 +3676,12 @@ const App = () => {
     });
   }, [assets, filters]);
 
+  useEffect(() => {
+    if (selectedAssetIds.length === 0) return;
+    const visibleIds = new Set(filteredAssets.map(asset => asset.id));
+    setSelectedAssetIds(prev => prev.filter(id => visibleIds.has(id)));
+  }, [filteredAssets, selectedAssetIds.length]);
+
   const selectedAssetActivity = useMemo(() => (
     selectedAssetId
       ? activityLogs.filter(entry => entry.subjectType === 'asset' && entry.subjectId === selectedAssetId)
@@ -4020,18 +4052,57 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border-2 border-gray-200 p-6">
-        <div className="mb-6 flex justify-between items-center">
+        <div className="bg-white rounded-xl border-2 border-gray-200 p-6">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-xl font-bold text-gray-900">{filteredAssets.length} Assets</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleSelectAllAssets}
+              className="rounded-full border-2 border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:border-gray-300"
+            >
+              {filteredAssets.length > 0 && filteredAssets.every(asset => selectedAssetIds.includes(asset.id))
+                ? 'Clear selection'
+                : 'Select all'}
+            </button>
+            {selectedAssetIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-full border-2 border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700">
+                {selectedAssetIds.length} selected
+                <button
+                  onClick={handleBatchDeleteAssets}
+                  disabled={batchDeletingAssets}
+                  className="rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-700 disabled:bg-rose-300"
+                >
+                  {batchDeletingAssets ? 'Deleting...' : 'Delete'}
+                </button>
+                <button
+                  onClick={() => setSelectedAssetIds([])}
+                  className="rounded-full border border-rose-200 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:border-rose-300"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredAssets.map(asset => (
             <div 
               key={asset.id} 
-              className="border-2 border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-blue-300 transition-all cursor-pointer group"
+              className="relative border-2 border-gray-200 rounded-xl p-4 hover:shadow-lg hover:border-blue-300 transition-all cursor-pointer group"
               onClick={() => { setSelectedAssetId(asset.id); setCurrentView('asset-detail'); }}
             >
+              <label
+                className="absolute left-3 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border-2 border-gray-200 bg-white shadow-sm"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={selectedAssetIds.includes(asset.id)}
+                  onChange={() => toggleAssetSelection(asset.id)}
+                />
+              </label>
               <AssetPreview asset={asset} className="w-full h-40 rounded-lg mb-3 group-hover:scale-105 transition-transform" />
               <div className="space-y-2">
                 <div className="font-semibold text-sm text-gray-900 truncate">{asset.title}</div>
@@ -5967,7 +6038,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 <p className="text-xs text-gray-400 mt-1">GIF or MP4; select multiple files for batch uploads</p>
                 {!R2_PUBLIC_BASE_URL && (
                   <p className="text-xs text-amber-600 mt-2">
-                    Cloud storage not configured. Uploads will stay local until R2 is set.
+                    Cloud storage is required. Configure R2 to upload for the team.
                   </p>
                 )}
                 {R2_PUBLIC_BASE_URL && !session?.access_token && (
