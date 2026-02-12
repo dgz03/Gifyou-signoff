@@ -87,6 +87,8 @@ type NotificationSettings = {
   notifyOnApproved: boolean;
   notifyOnHold: boolean;
   notifyOnRejected: boolean;
+  batchMediaUploads: boolean;
+  mediaUploadBatchSize: number;
 };
 
 type EventRecord = {
@@ -107,6 +109,7 @@ const TEXT_SECTIONS_STORAGE_KEY = 'gif-you-text-sections';
 const EVENT_STORAGE_KEY = 'gif-you-events';
 const ACTIVITY_STORAGE_KEY = 'gif-you-activity';
 const NOTIFICATIONS_STORAGE_KEY = 'gif-you-notifications';
+const UPLOAD_NOTIFICATION_STATE_KEY = 'gif-you-upload-notify-state';
 const MAX_INLINE_BYTES = 2 * 1024 * 1024;
 const AUTH_RESEND_SECONDS = 30;
 const R2_PUBLIC_BASE_URL = process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL ?? '';
@@ -126,7 +129,9 @@ const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   notifyOnNew: true,
   notifyOnApproved: true,
   notifyOnHold: false,
-  notifyOnRejected: true
+  notifyOnRejected: true,
+  batchMediaUploads: true,
+  mediaUploadBatchSize: 6
 };
 
 const STATUS_LABELS: Record<AssetStatus, string> = {
@@ -644,6 +649,39 @@ const formatAuthError = (message: string) => {
 const isLikelySlackWebhook = (value: string) => (
   /^https:\/\/hooks\.slack(?:-gov)?\.com\/services\/.+/i.test(value.trim())
 );
+
+const clampBatchSize = (value: unknown) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_NOTIFICATION_SETTINGS.mediaUploadBatchSize;
+  return Math.min(500, Math.max(1, parsed));
+};
+
+const normalizeNotificationSettings = (input: Partial<NotificationSettings>): NotificationSettings => ({
+  ...DEFAULT_NOTIFICATION_SETTINGS,
+  ...input,
+  mediaUploadBatchSize: clampBatchSize(input.mediaUploadBatchSize)
+});
+
+const readUploadNotifyPending = () => {
+  try {
+    const raw = window.localStorage.getItem(UPLOAD_NOTIFICATION_STATE_KEY);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw) as { pending?: number };
+    const value = Number.parseInt(String(parsed.pending ?? 0), 10);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const writeUploadNotifyPending = (pending: number) => {
+  const safeValue = Math.max(0, Math.floor(pending));
+  try {
+    window.localStorage.setItem(UPLOAD_NOTIFICATION_STATE_KEY, JSON.stringify({ pending: safeValue }));
+  } catch {
+    // ignore storage failures
+  }
+};
 
 const normalizeTagValue = (tag: string) => tag.trim().toLowerCase();
 const getTagBadgeClass = (tag: string) => (
@@ -1660,10 +1698,7 @@ const App = () => {
     if (storedNotifications) {
       try {
         const parsed = JSON.parse(storedNotifications) as Partial<NotificationSettings>;
-        setNotificationSettings({
-          ...DEFAULT_NOTIFICATION_SETTINGS,
-          ...parsed
-        });
+        setNotificationSettings(normalizeNotificationSettings(parsed));
       } catch {
         setNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS);
       }
@@ -2591,8 +2626,7 @@ const App = () => {
       addActivityEntries(activityEntries);
       if (shouldNotifyOnNew()) {
         const eventName = eventLookup.get(newAsset.eventId)?.name ?? 'event';
-        const message = `${actor} uploaded ${assetsToAdd.length} new asset(s) for ${eventName}. Status: ${STATUS_LABELS.TO_REVIEW}.`;
-        void sendSlackNotification(message);
+        void notifyMediaUploadsByPolicy(assetsToAdd.length, eventName, actor);
       }
 
       setUploadModal(false);
@@ -3044,6 +3078,36 @@ const App = () => {
     } finally {
       setIsTestingSlack(false);
     }
+  };
+
+  const notifyMediaUploadsByPolicy = async (
+    uploadedCount: number,
+    eventName: string,
+    actor: string
+  ) => {
+    if (!shouldNotifyOnNew() || uploadedCount <= 0) return;
+
+    if (!notificationSettings.batchMediaUploads) {
+      const message = `${actor} uploaded ${uploadedCount} new asset(s) for ${eventName}. Status: ${STATUS_LABELS.TO_REVIEW}.`;
+      await sendSlackNotification(message);
+      return;
+    }
+
+    const threshold = clampBatchSize(notificationSettings.mediaUploadBatchSize);
+    const pending = readUploadNotifyPending() + uploadedCount;
+    if (pending < threshold) {
+      writeUploadNotifyPending(pending);
+      return;
+    }
+
+    const message = `📦 ${pending} new upload(s) are ready for review. Latest event: ${eventName}.`;
+    const result = await sendSlackNotification(message);
+    if (!result.ok) {
+      writeUploadNotifyPending(pending);
+      return;
+    }
+
+    writeUploadNotifyPending(0);
   };
 
   const buildBulkImportDraft = (presetGroupId?: string, presetSectionId?: string) => ({
@@ -6661,8 +6725,42 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                     checked={notificationSettings.notifyOnNew}
                     onChange={(e) => setNotificationSettings(prev => ({ ...prev, notifyOnNew: e.target.checked }))}
                   />
-                  New items need review
+                  New media uploads need review
                 </label>
+                {notificationSettings.notifyOnNew && (
+                  <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
+                    <label className="flex items-center gap-3 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={notificationSettings.batchMediaUploads}
+                        onChange={(e) => setNotificationSettings(prev => ({ ...prev, batchMediaUploads: e.target.checked }))}
+                      />
+                      Batch media upload alerts
+                    </label>
+                    {notificationSettings.batchMediaUploads && (
+                      <div className="flex items-center gap-3">
+                        <label htmlFor="media-upload-batch-size" className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500">
+                          Send every
+                        </label>
+                        <input
+                          id="media-upload-batch-size"
+                          name="mediaUploadBatchSize"
+                          type="number"
+                          min={1}
+                          max={500}
+                          className="w-24 rounded-lg border-2 border-gray-200 px-3 py-1.5 text-sm font-semibold text-gray-700 focus:border-blue-500 focus:outline-none"
+                          value={notificationSettings.mediaUploadBatchSize}
+                          onChange={(e) => setNotificationSettings(prev => ({
+                            ...prev,
+                            mediaUploadBatchSize: clampBatchSize(e.target.value)
+                          }))}
+                        />
+                        <span className="text-sm text-gray-600">upload(s)</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <label className="flex items-center gap-3 text-sm text-gray-700">
                   <input
                     type="checkbox"
