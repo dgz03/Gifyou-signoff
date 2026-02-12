@@ -641,6 +641,10 @@ const formatAuthError = (message: string) => {
   return message;
 };
 
+const isLikelySlackWebhook = (value: string) => (
+  /^https:\/\/hooks\.slack(?:-gov)?\.com\/services\/.+/i.test(value.trim())
+);
+
 const normalizeTagValue = (tag: string) => tag.trim().toLowerCase();
 const getTagBadgeClass = (tag: string) => (
   TAG_BADGE_STYLES[normalizeTagValue(tag)] ?? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -2984,14 +2988,24 @@ const App = () => {
   );
 
   const sendSlackNotification = async (message: string) => {
-    if (!notificationSettings.enabled) return false;
+    if (!notificationSettings.enabled) {
+      return { ok: false, error: 'Notifications are disabled.' } as const;
+    }
     const webhook = notificationSettings.slackWebhookUrl.trim();
-    if (!webhook) return false;
+    if (!webhook) {
+      return { ok: false, error: 'Missing Slack webhook URL.' } as const;
+    }
+    if (!isLikelySlackWebhook(webhook)) {
+      return {
+        ok: false,
+        error: 'Use an Incoming Webhook URL (https://hooks.slack.com/services/...)'
+      } as const;
+    }
     try {
       const authToken = await getAuthToken(session);
       if (!authToken) {
         console.log('Slack notification skipped: missing auth token.');
-        return false;
+        return { ok: false, error: 'Missing auth token. Sign in again and retry.' } as const;
       }
       const response = await fetch('/api/notifications/slack', {
         method: 'POST',
@@ -3007,12 +3021,12 @@ const App = () => {
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
         console.log('Slack notification failed:', payload?.error ?? response.statusText);
-        return false;
+        return { ok: false, error: payload?.error ?? 'Slack request failed.' } as const;
       }
-      return true;
+      return { ok: true } as const;
     } catch (error) {
       console.log('Slack notification failed:', error);
-      return false;
+      return { ok: false, error: 'Unable to reach Slack. Please try again.' } as const;
     }
   };
 
@@ -3021,9 +3035,9 @@ const App = () => {
     setIsTestingSlack(true);
     try {
       const timestamp = new Date().toLocaleString('en-US');
-      const sent = await sendSlackNotification(`Test notification from Gif You Signoff (${timestamp}).`);
-      if (!sent) {
-        alert('Slack test failed. Check notifications toggle, webhook URL, and server env.');
+      const result = await sendSlackNotification(`Test notification from Gif You Signoff (${timestamp}).`);
+      if (!result.ok) {
+        alert(`Slack test failed: ${result.error}`);
         return;
       }
       alert('Slack test sent. If nothing appears, re-check your webhook URL.');
@@ -6608,6 +6622,8 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">Slack webhook URL</label>
                 <input
+                  id="slack-webhook-url"
+                  name="slackWebhookUrl"
                   type="url"
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
                   value={notificationSettings.slackWebhookUrl}
@@ -6617,9 +6633,19 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 <p className="mt-2 text-xs text-gray-500">
                   Uses a Slack incoming webhook and is sent from the server (no browser CORS issues).
                 </p>
+                {notificationSettings.slackWebhookUrl.trim().length > 0 && !isLikelySlackWebhook(notificationSettings.slackWebhookUrl) && (
+                  <p className="mt-2 text-xs text-rose-600">
+                    Invalid format. This must be a Slack Incoming Webhook URL, not a channel link.
+                  </p>
+                )}
                 <button
                   onClick={() => void handleSlackTest()}
-                  disabled={isTestingSlack || !notificationSettings.enabled || !notificationSettings.slackWebhookUrl.trim()}
+                  disabled={
+                    isTestingSlack
+                    || !notificationSettings.enabled
+                    || !notificationSettings.slackWebhookUrl.trim()
+                    || !isLikelySlackWebhook(notificationSettings.slackWebhookUrl)
+                  }
                   className="mt-3 rounded-lg border-2 border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isTestingSlack ? 'Sending test...' : 'Send test message'}
