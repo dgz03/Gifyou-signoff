@@ -1257,6 +1257,7 @@ const App = () => {
   const [authCooldown, setAuthCooldown] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingText, setIsSavingText] = useState(false);
+  const [isTestingSlack, setIsTestingSlack] = useState(false);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [batchDeletingAssets, setBatchDeletingAssets] = useState(false);
   const [assetsLoading, setAssetsLoading] = useState(true);
@@ -2983,17 +2984,51 @@ const App = () => {
   );
 
   const sendSlackNotification = async (message: string) => {
-    if (!notificationSettings.enabled) return;
+    if (!notificationSettings.enabled) return false;
     const webhook = notificationSettings.slackWebhookUrl.trim();
-    if (!webhook) return;
+    if (!webhook) return false;
     try {
-      await fetch(webhook, {
+      const authToken = await getAuthToken(session);
+      if (!authToken) {
+        console.log('Slack notification skipped: missing auth token.');
+        return false;
+      }
+      const response = await fetch('/api/notifications/slack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: message })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          message,
+          webhookUrl: webhook
+        })
       });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        console.log('Slack notification failed:', payload?.error ?? response.statusText);
+        return false;
+      }
+      return true;
     } catch (error) {
       console.log('Slack notification failed:', error);
+      return false;
+    }
+  };
+
+  const handleSlackTest = async () => {
+    if (isTestingSlack) return;
+    setIsTestingSlack(true);
+    try {
+      const timestamp = new Date().toLocaleString('en-US');
+      const sent = await sendSlackNotification(`Test notification from Gif You Signoff (${timestamp}).`);
+      if (!sent) {
+        alert('Slack test failed. Check notifications toggle, webhook URL, and server env.');
+        return;
+      }
+      alert('Slack test sent. If nothing appears, re-check your webhook URL.');
+    } finally {
+      setIsTestingSlack(false);
     }
   };
 
@@ -6580,8 +6615,15 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   placeholder="https://hooks.slack.com/services/..."
                 />
                 <p className="mt-2 text-xs text-gray-500">
-                  This uses a Slack incoming webhook. In production, route through the server for reliability.
+                  Uses a Slack incoming webhook and is sent from the server (no browser CORS issues).
                 </p>
+                <button
+                  onClick={() => void handleSlackTest()}
+                  disabled={isTestingSlack || !notificationSettings.enabled || !notificationSettings.slackWebhookUrl.trim()}
+                  className="mt-3 rounded-lg border-2 border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isTestingSlack ? 'Sending test...' : 'Send test message'}
+                </button>
               </div>
 
               <div className="rounded-xl border-2 border-gray-200 bg-gray-50 p-4 space-y-3">
