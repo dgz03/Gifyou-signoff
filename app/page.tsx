@@ -3008,7 +3008,6 @@ const App = () => {
 
   const shouldNotifyForStatus = (status: AssetStatus) => {
     if (!notificationSettings.enabled) return false;
-    if (!notificationSettings.slackWebhookUrl.trim()) return false;
     if (status === 'APPROVED') return notificationSettings.notifyOnApproved;
     if (status === 'HOLD') return notificationSettings.notifyOnHold;
     if (status === 'REJECTED') return notificationSettings.notifyOnRejected;
@@ -3017,7 +3016,6 @@ const App = () => {
 
   const shouldNotifyOnNew = () => (
     notificationSettings.enabled
-    && notificationSettings.slackWebhookUrl.trim().length > 0
     && notificationSettings.notifyOnNew
   );
 
@@ -3026,10 +3024,7 @@ const App = () => {
       return { ok: false, error: 'Notifications are disabled.' } as const;
     }
     const webhook = notificationSettings.slackWebhookUrl.trim();
-    if (!webhook) {
-      return { ok: false, error: 'Missing Slack webhook URL.' } as const;
-    }
-    if (!isLikelySlackWebhook(webhook)) {
+    if (webhook && !isLikelySlackWebhook(webhook)) {
       return {
         ok: false,
         error: 'Use an Incoming Webhook URL (https://hooks.slack.com/services/...)'
@@ -3047,10 +3042,11 @@ const App = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`
         },
-        body: JSON.stringify({
-          message,
-          webhookUrl: webhook
-        })
+        body: JSON.stringify(
+          webhook
+            ? { message, webhookUrl: webhook }
+            : { message }
+        )
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
@@ -6692,10 +6688,10 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors"
                   value={notificationSettings.slackWebhookUrl}
                   onChange={(e) => setNotificationSettings(prev => ({ ...prev, slackWebhookUrl: e.target.value }))}
-                  placeholder="https://hooks.slack.com/services/..."
+                  placeholder="Optional: https://hooks.slack.com/services/..."
                 />
                 <p className="mt-2 text-xs text-gray-500">
-                  Uses a Slack incoming webhook and is sent from the server (no browser CORS issues).
+                  Optional if a server default webhook is configured. Uses server-side sending (no browser CORS issues).
                 </p>
                 {notificationSettings.slackWebhookUrl.trim().length > 0 && !isLikelySlackWebhook(notificationSettings.slackWebhookUrl) && (
                   <p className="mt-2 text-xs text-rose-600">
@@ -6707,8 +6703,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   disabled={
                     isTestingSlack
                     || !notificationSettings.enabled
-                    || !notificationSettings.slackWebhookUrl.trim()
-                    || !isLikelySlackWebhook(notificationSettings.slackWebhookUrl)
+                    || (notificationSettings.slackWebhookUrl.trim().length > 0 && !isLikelySlackWebhook(notificationSettings.slackWebhookUrl))
                   }
                   className="mt-3 rounded-lg border-2 border-blue-200 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
