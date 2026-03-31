@@ -4528,6 +4528,19 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
           </div>
         </div>
 
+        {selectedAsset.version > 1 && (
+          <div className="flex items-center gap-3 rounded-xl border-2 border-yellow-300 bg-yellow-50 px-5 py-3">
+            <span className="text-lg">✦</span>
+            <div>
+              <span className="font-bold text-yellow-800">Refined upload</span>
+              <span className="ml-2 text-sm text-yellow-700">Version {selectedAsset.version} — this GIF was re-uploaded after review feedback.</span>
+            </div>
+            {selectedAsset.previousMediaUrl && (
+              <span className="ml-auto text-xs font-semibold text-yellow-600">Original available ↓</span>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-xl border-2 border-gray-200 p-8">
