@@ -2891,14 +2891,25 @@ const App = () => {
     const newEventName = eventLookup.get(newEventId)?.name ?? 'unknown event';
     const updatedAt = new Date().toISOString();
     const actor = actorLabel;
-    const updatedAssets: UiAsset[] = [];
+    const idSet = new Set(ids);
+
+    // Compute updated assets from current state BEFORE calling setAssets
+    const updatedAssets = assets
+      .filter(a => idSet.has(a.id) && a.eventId !== newEventId)
+      .map(a => ({ ...a, eventId: newEventId, updatedAt }));
+
+    if (updatedAssets.length === 0) {
+      setBatchReassignEventId('');
+      setSelectedAssetIds([]);
+      return;
+    }
+
+    const updatedIdSet = new Set(updatedAssets.map(a => a.id));
     setAssets(prev => prev.map(a => {
-      if (!ids.includes(a.id) || a.eventId === newEventId) return a;
-      const updated: UiAsset = { ...a, eventId: newEventId, updatedAt };
-      updatedAssets.push(updated);
-      return updated;
+      if (!updatedIdSet.has(a.id)) return a;
+      return updatedAssets.find(u => u.id === a.id) ?? a;
     }));
-    if (updatedAssets.length === 0) return;
+
     addActivityEntries(updatedAssets.map(a =>
       buildActivityEntry({
         subjectType: 'asset',
@@ -2908,8 +2919,10 @@ const App = () => {
         comment: `Reassigned to "${newEventName}"`
       })
     ));
+
     setBatchReassignEventId('');
     setSelectedAssetIds([]);
+
     const authToken = await getAuthToken(session);
     if (authToken) {
       const synced = await saveAssetsToApi(updatedAssets, authToken);
