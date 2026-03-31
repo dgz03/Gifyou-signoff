@@ -30,6 +30,7 @@ type IncomingAsset = {
   mediaStorage?: string;
   fileName?: string;
   fileSize?: number;
+  suggestionId?: string;
 };
 
 const sendTelegramMessage = async (message: string) => {
@@ -115,7 +116,8 @@ const mapToDbAsset = (asset: IncomingAsset) => ({
   media_type: asset.mediaType ?? null,
   media_storage: asset.mediaStorage ?? null,
   file_name: asset.fileName ?? null,
-  file_size: asset.fileSize ?? null
+  file_size: asset.fileSize ?? null,
+  suggestion_id: asset.suggestionId ?? null
 });
 
 export async function GET(request: Request) {

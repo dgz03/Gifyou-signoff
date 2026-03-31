@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabaseClient';
 import type { AssetStatus, SkinTone } from '@/types';
 import type { Session } from '@supabase/supabase-js';
 
-type View = 'dashboard' | 'queue' | 'events' | 'asset-detail' | 'text-signoff';
+type View = 'dashboard' | 'queue' | 'events' | 'asset-detail' | 'suggestions' | 'comments';
 type Role = 'creator' | 'reviewer';
 
 type UiAsset = {
@@ -29,6 +29,7 @@ type UiAsset = {
   mediaStorage?: 'inline' | 'object';
   fileName?: string;
   fileSize?: number;
+  suggestionId?: string;
 };
 
 type TextItem = {
@@ -281,6 +282,11 @@ const normalizeStoredAssets = (input: unknown): UiAsset[] => {
       const uploader = typeof data.uploader === 'string' ? data.uploader : 'Creator Team';
       const reviewer = typeof data.reviewer === 'string' ? data.reviewer : null;
       const version = typeof data.version === 'number' ? data.version : 1;
+      const suggestionId = typeof data.suggestionId === 'string'
+        ? data.suggestionId
+        : typeof data.suggestion_id === 'string'
+        ? data.suggestion_id
+        : undefined;
 
       return {
         id: typeof data.id === 'string' ? data.id : `asset-${eventId}-${skinTone}-${Date.now()}`,
@@ -300,7 +306,8 @@ const normalizeStoredAssets = (input: unknown): UiAsset[] => {
         mediaType,
         mediaStorage,
         fileName,
-        fileSize
+        fileSize,
+        suggestionId
       };
     })
     .filter((asset): asset is UiAsset => Boolean(asset));
@@ -1454,6 +1461,15 @@ const App = () => {
   const [assetCommentDraft, setAssetCommentDraft] = useState('');
   const [reviewAction, setReviewAction] = useState<AssetStatus | ''>('');
   const [reviewNotes, setReviewNotes] = useState('');
+  const [reuploadAssetId, setReuploadAssetId] = useState<string | null>(null);
+  const [isReuploading, setIsReuploading] = useState(false);
+  const reuploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [reassignEventId, setReassignEventId] = useState('');
+  const [pendingUploadSuggestionId, setPendingUploadSuggestionId] = useState('');
+  const [suggestionModalOpen, setSuggestionModalOpen] = useState(false);
+  const [suggestionDraft, setSuggestionDraft] = useState({ title: '', body: '' });
+  const [suggestionFilter, setSuggestionFilter] = useState<'open' | 'done'>('open');
+  const [commentsFilter, setCommentsFilter] = useState<'all' | 'asset' | 'suggestion'>('all');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2501,7 +2517,7 @@ const App = () => {
   };
 
   const openTextGroupView = (groupId?: string, eventId?: string) => {
-    setCurrentView('text-signoff');
+    setCurrentView('suggestions');
     setTextFilters(prev => ({
       ...prev,
       groupId: groupId ?? '',
@@ -2596,7 +2612,8 @@ const App = () => {
             mediaType: file.type,
             mediaStorage,
             fileName: file.name,
-            fileSize: file.size
+            fileSize: file.size,
+            ...(pendingUploadSuggestionId ? { suggestionId: pendingUploadSuggestionId } : {})
           });
         }
       }
@@ -2632,6 +2649,7 @@ const App = () => {
       setUploadModal(false);
       setBatchUploadMode(false);
       setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
+      setPendingUploadSuggestionId('');
     } finally {
       uploadLockRef.current = false;
       setIsUploading(false);
@@ -2649,7 +2667,7 @@ const App = () => {
           ...asset,
           status: action,
           reviewer: actor,
-          notesRefinement: action === 'HOLD' ? cleanedNotes : asset.notesRefinement,
+          notesRefinement: (action === 'HOLD' || action === 'REJECTED') ? cleanedNotes : asset.notesRefinement,
           updatedAt
         };
       }
@@ -2677,7 +2695,7 @@ const App = () => {
         ...current,
         status: action,
         reviewer: actor,
-        notesRefinement: action === 'HOLD' ? cleanedNotes : current.notesRefinement,
+        notesRefinement: (action === 'HOLD' || action === 'REJECTED') ? cleanedNotes : current.notesRefinement,
         updatedAt
       };
       const synced = await saveAssetsToApi([updatedAsset], authToken);
@@ -2712,6 +2730,91 @@ const App = () => {
     } else {
       alert('Sign in to sync tone updates to the team feed.');
     }
+  };
+
+  const handleReupload = async (assetId: string, file: File) => {
+    if (isReuploading) return;
+    const current = assets.find(a => a.id === assetId);
+    if (!current) return;
+    if (file.type !== 'image/gif' && file.type !== 'video/mp4') {
+      alert('Please upload a GIF or MP4 file.');
+      return;
+    }
+    const authToken = await getAuthToken(session);
+    if (!R2_PUBLIC_BASE_URL || !authToken) {
+      alert('Cloud storage is required. Please sign in and configure R2.');
+      return;
+    }
+    setIsReuploading(true);
+    try {
+      const mediaUrl = await uploadFileToR2(file, current.eventId, authToken);
+      const updatedAt = new Date().toISOString();
+      const actor = actorLabel;
+      const updatedAsset: UiAsset = {
+        ...current,
+        status: 'TO_REVIEW',
+        mediaUrl,
+        mediaType: file.type,
+        mediaStorage: 'object',
+        fileName: file.name,
+        fileSize: file.size,
+        version: current.version + 1,
+        reviewer: null,
+        updatedAt
+      };
+      setAssets(prev => prev.map(a => (a.id === assetId ? updatedAsset : a)));
+      addActivityEntries([
+        buildActivityEntry({
+          subjectType: 'asset',
+          subjectId: assetId,
+          action: 'STATUS_CHANGED',
+          actor,
+          fromStatus: current.status,
+          toStatus: 'TO_REVIEW',
+          comment: 'Re-uploaded as refined version'
+        })
+      ]);
+      const synced = await saveAssetsToApi([updatedAsset], authToken);
+      if (!synced) {
+        alert('Re-upload saved locally but could not sync to the team feed.');
+      }
+      setReuploadAssetId(null);
+    } catch (error) {
+      alert('Re-upload failed. Please try again.');
+      console.log('Reupload failed:', error);
+    } finally {
+      setIsReuploading(false);
+    }
+  };
+
+  const handleEventReassign = async (assetId: string, newEventId: string) => {
+    if (!newEventId) return;
+    const current = assets.find(a => a.id === assetId);
+    if (!current || current.eventId === newEventId) return;
+    const updatedAt = new Date().toISOString();
+    const oldEventName = eventLookup.get(current.eventId)?.name ?? 'unknown event';
+    const newEventName = eventLookup.get(newEventId)?.name ?? 'unknown event';
+    const updatedAsset: UiAsset = { ...current, eventId: newEventId, updatedAt };
+    setAssets(prev => prev.map(a => (a.id === assetId ? updatedAsset : a)));
+    addActivityEntries([
+      buildActivityEntry({
+        subjectType: 'asset',
+        subjectId: assetId,
+        action: 'COMMENT',
+        actor: actorLabel,
+        comment: `Reassigned from "${oldEventName}" to "${newEventName}"`
+      })
+    ]);
+    const authToken = await getAuthToken(session);
+    if (authToken) {
+      const synced = await saveAssetsToApi([updatedAsset], authToken);
+      if (!synced) {
+        alert('Reassignment saved locally but could not sync to the team feed.');
+      }
+    } else {
+      alert('Sign in to sync reassignment to the team feed.');
+    }
+    setReassignEventId('');
   };
 
   const handleDeleteAsset = async (assetId: string) => {
@@ -3673,6 +3776,43 @@ const App = () => {
     }
   };
 
+  const handleAddSuggestion = async () => {
+    const title = suggestionDraft.title.trim();
+    const body = suggestionDraft.body.trim();
+    if (!body) return;
+    const authToken = await getAuthToken(session);
+    const now = new Date().toISOString();
+    const newItem: TextItem = {
+      id: `suggestion-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title: title || body.slice(0, 60),
+      body,
+      category: 'Suggestion',
+      status: 'TO_REVIEW',
+      author: actorLabel,
+      reviewer: null,
+      createdAt: now,
+      updatedAt: now,
+      tags: [],
+      reviewNotes: ''
+    };
+    setTextItems(prev => [newItem, ...prev]);
+    setSuggestionDraft({ title: '', body: '' });
+    setSuggestionModalOpen(false);
+    if (authToken) {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` };
+      await fetch('/api/text-items', { method: 'POST', headers, body: JSON.stringify({ items: [newItem] }) }).catch(() => null);
+    }
+  };
+
+  const handleDeleteSuggestion = async (itemId: string) => {
+    if (!window.confirm('Remove this suggestion? This cannot be undone.')) return;
+    setTextItems(prev => prev.filter(item => item.id !== itemId));
+    const authToken = await getAuthToken(session);
+    if (authToken) {
+      await fetch(`/api/text-items/${itemId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${authToken}` } }).catch(() => null);
+    }
+  };
+
   const handleDeleteText = (itemId: string) => {
     if (!window.confirm('Remove this text item? This cannot be undone.')) return;
     setTextItems(prev => prev.filter(item => item.id !== itemId));
@@ -4233,6 +4373,14 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   <span className="text-xs text-gray-500">{getToneMeta(asset.skinTone).name}</span>
                 </div>
                 <StatusBadge status={asset.status} />
+                <div className="flex flex-wrap gap-1">
+                  {asset.version > 1 && (
+                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700">Refined</span>
+                  )}
+                  {asset.suggestionId && (
+                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">Suggested</span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -4419,6 +4567,44 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   <div className="text-gray-500 mb-1">Created</div>
                   <div className="font-semibold text-gray-900">{new Date(selectedAsset.createdAt).toLocaleString()}</div>
                 </div>
+                {selectedAsset.version > 1 && (
+                  <div>
+                    <div className="text-gray-500 mb-1">Version</div>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-1 text-xs font-bold text-purple-700">
+                      Refined (v{selectedAsset.version})
+                    </span>
+                  </div>
+                )}
+                {selectedAsset.suggestionId && (
+                  <div>
+                    <div className="text-gray-500 mb-1">Origin</div>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-700">
+                      Suggested
+                    </span>
+                  </div>
+                )}
+                {currentRole === 'creator' && (
+                  <div>
+                    <div className="text-gray-500 mb-2">Reassign to event</div>
+                    <select
+                      className="w-full rounded-lg border-2 border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 focus:border-blue-500 focus:outline-none"
+                      value={reassignEventId || selectedAsset.eventId}
+                      onChange={(e) => setReassignEventId(e.target.value)}
+                    >
+                      {events.map(ev => (
+                        <option key={ev.id} value={ev.id}>{ev.name}</option>
+                      ))}
+                    </select>
+                    {reassignEventId && reassignEventId !== selectedAsset.eventId && (
+                      <button
+                        onClick={() => void handleEventReassign(selectedAsset.id, reassignEventId)}
+                        className="mt-2 w-full rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-700"
+                      >
+                        Confirm Reassign
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4435,14 +4621,41 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
             )}
 
             {selectedAsset.notesRefinement && (
-              <div className="bg-yellow-50 rounded-xl border-2 border-yellow-200 p-4">
+              <div className={`rounded-xl border-2 p-4 ${selectedAsset.version > 1 && selectedAsset.status === 'TO_REVIEW' ? 'border-purple-200 bg-purple-50' : 'border-yellow-200 bg-yellow-50'}`}>
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <AlertCircle className={`w-5 h-5 mt-0.5 flex-shrink-0 ${selectedAsset.version > 1 && selectedAsset.status === 'TO_REVIEW' ? 'text-purple-600' : 'text-yellow-600'}`} />
                   <div>
-                    <div className="font-bold text-yellow-900 mb-1">Refinements Needed</div>
-                    <p className="text-sm text-yellow-800">{selectedAsset.notesRefinement}</p>
+                    <div className={`font-bold mb-1 ${selectedAsset.version > 1 && selectedAsset.status === 'TO_REVIEW' ? 'text-purple-900' : 'text-yellow-900'}`}>
+                      {selectedAsset.version > 1 && selectedAsset.status === 'TO_REVIEW' ? 'Previous Reviewer Notes' : 'Refinements Needed'}
+                    </div>
+                    <p className={`text-sm ${selectedAsset.version > 1 && selectedAsset.status === 'TO_REVIEW' ? 'text-purple-800' : 'text-yellow-800'}`}>{selectedAsset.notesRefinement}</p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {currentRole === 'creator' && (selectedAsset.status === 'HOLD' || selectedAsset.status === 'REJECTED') && (
+              <div className="bg-white rounded-xl border-2 border-gray-200 p-4">
+                <h3 className="font-bold text-sm text-gray-900 mb-3">Re-upload as Refined</h3>
+                <p className="text-xs text-gray-500 mb-3">Upload a new version. The reviewer notes above will be kept for comparison.</p>
+                <input
+                  ref={reuploadInputRef}
+                  type="file"
+                  accept="image/gif,video/mp4"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void handleReupload(selectedAsset.id, file);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={() => reuploadInputRef.current?.click()}
+                  disabled={isReuploading}
+                  className="w-full rounded-xl border-2 border-purple-200 bg-purple-50 px-4 py-3 text-sm font-bold text-purple-700 hover:border-purple-300 hover:bg-purple-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isReuploading ? 'Uploading...' : 'Choose file to re-upload'}
+                </button>
               </div>
             )}
 
@@ -4623,6 +4836,141 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
     </div>
   );
 
+  const renderSuggestionsView = () => {
+    const suggestions = textItems.filter(item => item.category === 'Suggestion');
+    const openSuggestions = suggestions.filter(s => !assets.some(a => a.suggestionId === s.id));
+    const doneSuggestions = suggestions.filter(s => assets.some(a => a.suggestionId === s.id));
+    const displayed = suggestionFilter === 'done' ? doneSuggestions : openSuggestions;
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl p-8 text-white">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-indigo-100">Team workspace</p>
+              <h2 className="text-3xl font-bold">Suggestions</h2>
+              <p className="mt-2 text-indigo-100">
+                Anyone can suggest a GIF idea. Creators can pick one up and make it.
+              </p>
+            </div>
+            <button
+              onClick={() => setSuggestionModalOpen(true)}
+              className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+            >
+              + New suggestion
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border-2 border-gray-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Total</p>
+            <p className="mt-2 text-2xl font-bold text-gray-900">{suggestions.length}</p>
+          </div>
+          <div className="rounded-xl border-2 border-gray-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Open</p>
+            <p className="mt-2 text-2xl font-bold text-gray-900">{openSuggestions.length}</p>
+          </div>
+          <div className="rounded-xl border-2 border-gray-200 bg-white p-4">
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Done</p>
+            <p className="mt-2 text-2xl font-bold text-emerald-600">{doneSuggestions.length}</p>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => setSuggestionFilter('open')}
+            className={`rounded-full border-2 px-4 py-2 text-sm font-semibold transition-colors ${suggestionFilter === 'open' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+          >
+            Open ({openSuggestions.length})
+          </button>
+          <button
+            onClick={() => setSuggestionFilter('done')}
+            className={`rounded-full border-2 px-4 py-2 text-sm font-semibold transition-colors ${suggestionFilter === 'done' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+          >
+            Done ({doneSuggestions.length})
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          {displayed.length === 0 && (
+            <div className="rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+              <p className="text-sm font-semibold text-gray-600">
+                {suggestionFilter === 'done' ? 'No completed suggestions yet.' : 'No open suggestions yet.'}
+              </p>
+              <button
+                onClick={() => setSuggestionModalOpen(true)}
+                className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                Add the first suggestion
+              </button>
+            </div>
+          )}
+
+          {displayed.map(item => {
+            const linkedAssets = assets.filter(a => a.suggestionId === item.id);
+            const isDone = linkedAssets.length > 0;
+            return (
+              <div key={item.id} className={`rounded-2xl border-2 bg-white p-5 ${isDone ? 'border-emerald-200' : 'border-gray-200'}`}>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-bold text-gray-900">{item.title}</h3>
+                      {isDone && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                          <Check className="w-3 h-3" /> Done
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {item.author} · {new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                    <p className="mt-3 text-sm text-gray-700">{item.body}</p>
+                    {linkedAssets.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {linkedAssets.map(a => (
+                          <button
+                            key={a.id}
+                            onClick={() => openAssetDetail(a.id, linkedAssets)}
+                            className="rounded-lg border-2 border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 hover:border-indigo-300"
+                          >
+                            View GIF: {a.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    {currentRole === 'creator' && !isDone && (
+                      <button
+                        onClick={() => {
+                          setPendingUploadSuggestionId(item.id);
+                          setBatchUploadMode(false);
+                          setSingleUploadMode(false);
+                          setUploadModal(true);
+                        }}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                      >
+                        Create GIF
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void handleDeleteSuggestion(item.id)}
+                      className="text-xs font-semibold text-gray-400 hover:text-rose-600"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // kept as stub to avoid breaking any remaining references
   const renderTextSignOffView = () => {
     const selectedCount = selectedTextIds.length;
     const allVisibleSelected = filteredTextItems.length > 0
@@ -5048,6 +5396,96 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
             );
           })}
         </div>
+      </div>
+    );
+  };
+
+  const renderCommentsView = () => {
+    const commentEntries = activityLogs
+      .filter(e => {
+        if (commentsFilter === 'asset') return e.subjectType === 'asset' && (e.action === 'COMMENT' || (e.action === 'STATUS_CHANGED' && e.comment));
+        if (commentsFilter === 'suggestion') return e.subjectType === 'text' && (e.action === 'COMMENT' || (e.action === 'STATUS_CHANGED' && e.comment));
+        return e.action === 'COMMENT' || (e.action === 'STATUS_CHANGED' && e.comment);
+      })
+      .filter(e => e.comment && e.comment.trim().length > 0)
+      .slice()
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 200);
+
+    const getSubjectLabel = (entry: ActivityEntry) => {
+      if (entry.subjectType === 'asset') {
+        const asset = assets.find(a => a.id === entry.subjectId);
+        return asset ? asset.title : 'Deleted asset';
+      }
+      const item = textItems.find(t => t.id === entry.subjectId);
+      return item ? item.title : 'Deleted suggestion';
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl p-8 text-white">
+          <p className="text-xs uppercase tracking-[0.3em] text-gray-300">Team activity</p>
+          <h2 className="text-3xl font-bold">Comments</h2>
+          <p className="mt-2 text-gray-300">Latest notes, comments, and suggestions across all assets.</p>
+        </div>
+
+        <div className="flex gap-2">
+          {(['all', 'asset', 'suggestion'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setCommentsFilter(f)}
+              className={`rounded-full border-2 px-4 py-2 text-sm font-semibold capitalize transition-colors ${commentsFilter === f ? 'border-gray-700 bg-gray-100 text-gray-900' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+            >
+              {f === 'all' ? 'All' : f === 'asset' ? 'GIFs' : 'Suggestions'}
+            </button>
+          ))}
+        </div>
+
+        {commentEntries.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+            <p className="text-sm font-semibold text-gray-500">No comments yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {commentEntries.map(entry => {
+              const subjectLabel = getSubjectLabel(entry);
+              const isAsset = entry.subjectType === 'asset';
+              const asset = isAsset ? assets.find(a => a.id === entry.subjectId) : null;
+              return (
+                <div
+                  key={entry.id}
+                  className={`rounded-2xl border-2 bg-white p-4 ${isAsset ? 'cursor-pointer hover:border-blue-300 transition-colors' : ''}`}
+                  onClick={() => {
+                    if (isAsset && asset) {
+                      openAssetDetail(asset.id, assets);
+                    }
+                  }}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-0.5 flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${isAsset ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                        {isAsset ? 'GIF' : 'Suggestion'}
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-gray-900">{entry.actor}</div>
+                        <div className="text-xs text-gray-500 truncate max-w-[300px]">on <span className="font-semibold text-gray-700">{subjectLabel}</span></div>
+                      </div>
+                    </div>
+                    <span className="text-xs text-gray-400 whitespace-nowrap">{formatActivityTime(entry.timestamp)}</span>
+                  </div>
+                  <div className="mt-3 rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                    {entry.action === 'STATUS_CHANGED' && entry.toStatus && (
+                      <span className={`mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLES[entry.toStatus]}`}>
+                        {STATUS_LABELS[entry.toStatus]}
+                      </span>
+                    )}
+                    {entry.comment}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -5983,10 +6421,16 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               Events
             </NavButton>
             <NavButton
-              active={currentView === 'text-signoff'}
-              onClick={() => setCurrentView('text-signoff')}
+              active={currentView === 'suggestions'}
+              onClick={() => setCurrentView('suggestions')}
             >
-              Text Sign-Off
+              Suggestions
+            </NavButton>
+            <NavButton
+              active={currentView === 'comments'}
+              onClick={() => setCurrentView('comments')}
+            >
+              Comments
             </NavButton>
           </nav>
         </div>
@@ -6019,7 +6463,8 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
             {currentView === 'dashboard' && renderDashboardView()}
             {currentView === 'queue' && renderReviewQueueView()}
             {currentView === 'events' && renderEventsView()}
-            {currentView === 'text-signoff' && renderTextSignOffView()}
+            {currentView === 'suggestions' && renderSuggestionsView()}
+            {currentView === 'comments' && renderCommentsView()}
             {currentView === 'asset-detail' && renderAssetDetailView()}
           </>
         )}
@@ -6030,6 +6475,14 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
             <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+              {pendingUploadSuggestionId && (() => {
+                const linked = textItems.find(t => t.id === pendingUploadSuggestionId);
+                return linked ? (
+                  <div className="mb-3 rounded-xl border-2 border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                    <span className="font-bold">Creating GIF for suggestion:</span> {linked.title}
+                  </div>
+                ) : null;
+              })()}
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-2xl font-bold">Upload Assets</h2>
                 <button
@@ -6245,6 +6698,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                     setBatchUploadMode(false);
                     setSingleUploadMode(false);
                     setNewAsset({ title: '', eventId: '', skinTones: [], files: [] });
+                    setPendingUploadSuggestionId('');
                   }}
                 className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl hover:bg-gray-50 font-medium transition-colors"
               >
@@ -6262,6 +6716,60 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
         </div>
       )}
 
+      {suggestionModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl p-8 max-w-lg w-full shadow-2xl">
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <h2 className="text-2xl font-bold">New Suggestion</h2>
+              <button
+                onClick={() => { setSuggestionModalOpen(false); setSuggestionDraft({ title: '', body: '' }); }}
+                className="rounded-lg border-2 border-gray-200 px-3 py-1 text-xs font-semibold text-gray-500 hover:border-gray-300"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Title (optional)</label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none"
+                  value={suggestionDraft.title}
+                  onChange={(e) => setSuggestionDraft(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="Short title for the idea..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Suggestion *</label>
+                <textarea
+                  className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none"
+                  rows={5}
+                  value={suggestionDraft.body}
+                  onChange={(e) => setSuggestionDraft(prev => ({ ...prev, body: e.target.value }))}
+                  placeholder="Describe the GIF idea..."
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => { setSuggestionModalOpen(false); setSuggestionDraft({ title: '', body: '' }); }}
+                  className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl hover:bg-gray-50 font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void handleAddSuggestion()}
+                  disabled={!suggestionDraft.body.trim()}
+                  className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium"
+                >
+                  Post suggestion
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* show a banner inside the upload modal when creating from suggestion */}
       {textModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-white rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
