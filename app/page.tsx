@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabaseClient';
 import type { AssetStatus, SkinTone } from '@/types';
 import type { Session } from '@supabase/supabase-js';
 
-type View = 'dashboard' | 'queue' | 'events' | 'asset-detail' | 'suggestions' | 'comments';
+type View = 'dashboard' | 'queue' | 'events' | 'asset-detail' | 'suggestions' | 'summary';
 type Role = 'creator' | 'reviewer';
 
 type UiAsset = {
@@ -5551,7 +5551,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
       <div className="space-y-6">
         <div className="bg-gradient-to-br from-gray-700 to-gray-900 rounded-2xl p-8 text-white">
           <p className="text-xs uppercase tracking-[0.3em] text-gray-300">Team activity</p>
-          <h2 className="text-3xl font-bold">Comments</h2>
+          <h2 className="text-3xl font-bold">Summary</h2>
           <p className="mt-2 text-gray-300">Latest notes, comments, and suggestions across all assets.</p>
         </div>
 
@@ -6528,20 +6528,26 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
           </div>
 
           <nav className="mt-4 flex gap-2 overflow-x-auto pb-2 md:pb-0">
-            <NavButton 
-              active={currentView === 'dashboard'} 
+            <NavButton
+              active={currentView === 'summary'}
+              onClick={() => setCurrentView('summary')}
+            >
+              Summary
+            </NavButton>
+            <NavButton
+              active={currentView === 'dashboard'}
               onClick={() => setCurrentView('dashboard')}
             >
               Dashboard
             </NavButton>
-            <NavButton 
-              active={currentView === 'queue'} 
+            <NavButton
+              active={currentView === 'queue'}
               onClick={() => setCurrentView('queue')}
             >
               Review Queue
             </NavButton>
-            <NavButton 
-              active={currentView === 'events'} 
+            <NavButton
+              active={currentView === 'events'}
               onClick={() => setCurrentView('events')}
             >
               Events
@@ -6551,12 +6557,6 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               onClick={() => setCurrentView('suggestions')}
             >
               Suggestions
-            </NavButton>
-            <NavButton
-              active={currentView === 'comments'}
-              onClick={() => setCurrentView('comments')}
-            >
-              Comments
             </NavButton>
           </nav>
         </div>
@@ -6590,7 +6590,7 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
             {currentView === 'queue' && renderReviewQueueView()}
             {currentView === 'events' && renderEventsView()}
             {currentView === 'suggestions' && renderSuggestionsView()}
-            {currentView === 'comments' && renderCommentsView()}
+            {currentView === 'summary' && renderCommentsView()}
             {currentView === 'asset-detail' && renderAssetDetailView()}
           </>
         )}
