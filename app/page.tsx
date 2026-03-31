@@ -1309,6 +1309,7 @@ const App = () => {
   const [isTestingSlack, setIsTestingSlack] = useState(false);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [batchDeletingAssets, setBatchDeletingAssets] = useState(false);
+  const [batchReassignEventId, setBatchReassignEventId] = useState('');
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetsSyncError, setAssetsSyncError] = useState('');
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -2469,6 +2470,10 @@ const App = () => {
   }, [currentView, selectedAsset]);
 
   useEffect(() => {
+    setReassignEventId('');
+  }, [selectedAssetId]);
+
+  useEffect(() => {
     if (!eventModalOpen) return;
 
     const handleKey = (event: KeyboardEvent) => {
@@ -2879,6 +2884,41 @@ const App = () => {
     }
 
     setBatchDeletingAssets(false);
+  };
+
+  const handleBatchReassign = async (ids: string[], newEventId: string) => {
+    if (!newEventId || ids.length === 0) return;
+    const newEventName = eventLookup.get(newEventId)?.name ?? 'unknown event';
+    const updatedAt = new Date().toISOString();
+    const actor = actorLabel;
+    const updatedAssets: UiAsset[] = [];
+    setAssets(prev => prev.map(a => {
+      if (!ids.includes(a.id) || a.eventId === newEventId) return a;
+      const updated: UiAsset = { ...a, eventId: newEventId, updatedAt };
+      updatedAssets.push(updated);
+      return updated;
+    }));
+    if (updatedAssets.length === 0) return;
+    addActivityEntries(updatedAssets.map(a =>
+      buildActivityEntry({
+        subjectType: 'asset',
+        subjectId: a.id,
+        action: 'COMMENT',
+        actor,
+        comment: `Reassigned to "${newEventName}"`
+      })
+    ));
+    setBatchReassignEventId('');
+    setSelectedAssetIds([]);
+    const authToken = await getAuthToken(session);
+    if (authToken) {
+      const synced = await saveAssetsToApi(updatedAssets, authToken);
+      if (!synced) {
+        alert('Reassigned locally but could not sync to the team feed.');
+      }
+    } else {
+      alert('Sign in to sync reassignment to the team feed.');
+    }
   };
 
   const buildTextDraft = (item?: TextItem) => ({
@@ -4324,18 +4364,40 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                 : 'Select all'}
             </button>
             {selectedAssetIds.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded-full border-2 border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700">
-                {selectedAssetIds.length} selected
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border-2 border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700">
+                <span className="text-gray-500">{selectedAssetIds.length} selected</span>
+
+                <div className="flex items-center gap-1.5">
+                  <select
+                    className="rounded-lg border-2 border-indigo-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 focus:border-indigo-400 focus:outline-none"
+                    value={batchReassignEventId}
+                    onChange={(e) => setBatchReassignEventId(e.target.value)}
+                  >
+                    <option value="">Reassign to event…</option>
+                    {events.map(ev => (
+                      <option key={ev.id} value={ev.id}>{ev.name}</option>
+                    ))}
+                  </select>
+                  {batchReassignEventId && (
+                    <button
+                      onClick={() => void handleBatchReassign(selectedAssetIds, batchReassignEventId)}
+                      className="rounded-full bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700"
+                    >
+                      Confirm
+                    </button>
+                  )}
+                </div>
+
                 <button
                   onClick={handleBatchDeleteAssets}
                   disabled={batchDeletingAssets}
                   className="rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-700 disabled:bg-rose-300"
                 >
-                  {batchDeletingAssets ? 'Deleting...' : 'Delete'}
+                  {batchDeletingAssets ? 'Deleting…' : 'Delete'}
                 </button>
                 <button
-                  onClick={() => setSelectedAssetIds([])}
-                  className="rounded-full border border-rose-200 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:border-rose-300"
+                  onClick={() => { setSelectedAssetIds([]); setBatchReassignEventId(''); }}
+                  className="rounded-full border border-gray-300 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:border-gray-400"
                 >
                   Clear
                 </button>

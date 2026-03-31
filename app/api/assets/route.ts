@@ -117,7 +117,7 @@ const mapToDbAsset = (asset: IncomingAsset) => ({
   media_storage: asset.mediaStorage ?? null,
   file_name: asset.fileName ?? null,
   file_size: asset.fileSize ?? null,
-  suggestion_id: asset.suggestionId ?? null
+  ...(asset.suggestionId != null && { suggestion_id: asset.suggestionId })
 });
 
 export async function GET(request: Request) {
