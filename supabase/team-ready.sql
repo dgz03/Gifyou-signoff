@@ -68,8 +68,9 @@ create table if not exists notification_state (
   last_notified_at timestamptz
 );
 
--- Add suggestion_id to assets if not already present (run once on existing deployments)
+-- Add suggestion_id and previous_media_url to assets if not already present (run once on existing deployments)
 alter table if exists assets add column if not exists suggestion_id text;
+alter table if exists assets add column if not exists previous_media_url text;
 
 -- Lock down tables for client access (service role bypasses RLS).
 alter table if exists assets enable row level security;
