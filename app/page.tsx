@@ -1,6 +1,7 @@
 'use client';
 import Image from 'next/image';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import JSZip from 'jszip';
 import { Upload, Check, Pause, X, Clock, Calendar, AlertCircle, ChevronRight, ArrowRight } from 'lucide-react';
 import { INITIAL_EVENTS, OVERALL_GOAL, SKIN_TONES } from '@/lib/constants';
 import { supabase } from '@/lib/supabaseClient';
@@ -631,7 +632,6 @@ const readFileAsDataUrl = (file: File) => (
   })
 );
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const formatBytes = (bytes: number) => {
   if (bytes <= 0) return '0 KB';
@@ -2432,42 +2432,39 @@ const App = () => {
     return `${safeBase}.${extension}`;
   };
 
-  const downloadAssetMedia = async (asset: UiAsset, fileName: string) => {
-    if (!asset.mediaUrl) return;
-    try {
-      const response = await fetch(asset.mediaUrl);
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.log('Download failed, using direct link.', error);
-      const anchor = document.createElement('a');
-      anchor.href = asset.mediaUrl;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-    }
-  };
 
   const handleDownloadApproved = async () => {
     if (!selectedEvent || approvedEventAssets.length === 0) return;
 
-    setDownloadState({ total: approvedEventAssets.length, current: 0 });
-    for (let i = 0; i < approvedEventAssets.length; i += 1) {
+    const zip = new JSZip();
+    const total = approvedEventAssets.length;
+    setDownloadState({ total, current: 0 });
+
+    for (let i = 0; i < total; i += 1) {
       const asset = approvedEventAssets[i];
+      if (!asset.mediaUrl) continue;
       const filename = buildDownloadName(asset, selectedEvent.name);
-      await downloadAssetMedia(asset, filename);
-      setDownloadState({ total: approvedEventAssets.length, current: i + 1 });
-      await delay(200);
+      try {
+        const response = await fetch(asset.mediaUrl);
+        const blob = await response.blob();
+        zip.file(filename, blob);
+      } catch {
+        // skip failed fetches
+      }
+      setDownloadState({ total, current: i + 1 });
     }
-    await delay(400);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const safeEventName = sanitizeFileName(selectedEvent.name) || 'event';
+    const url = URL.createObjectURL(zipBlob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${safeEventName}-approved.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+
     setDownloadState(null);
   };
 
