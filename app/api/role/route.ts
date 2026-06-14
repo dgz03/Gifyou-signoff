@@ -17,9 +17,15 @@ const normalizeList = (value?: string) => (
     .filter(Boolean)
 );
 
+const HARDCODED_REVIEWER_EMAILS = new Set(['sabina@gifview.com']);
+
 const matchRole = (email: string): RoleMatch => {
   const lowerEmail = email.toLowerCase();
   const domain = lowerEmail.split('@')[1] ?? '';
+
+  if (HARDCODED_REVIEWER_EMAILS.has(lowerEmail)) {
+    return { role: 'reviewer', locked: true };
+  }
 
   const reviewerEmails = new Set(normalizeList(process.env.TEAM_REVIEWER_EMAILS));
   const creatorEmails = new Set(normalizeList(process.env.TEAM_CREATOR_EMAILS));
