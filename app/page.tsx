@@ -4386,15 +4386,22 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
     <div className="space-y-6">
       <div className="bg-white rounded-xl border-2 border-gray-200 p-6">
         <div className="flex flex-wrap gap-3">
-          <select 
+          <select
             className="px-4 py-2.5 border-2 border-gray-200 rounded-lg text-sm font-medium focus:border-blue-500 focus:outline-none transition-colors"
             value={filters.status}
             onChange={(e) => setFilters({ ...filters, status: e.target.value as AssetStatus | '' })}
           >
-            <option value="">All Statuses</option>
-            {ASSET_STATUSES.map(status => (
+            <option value="">{currentRole === 'reviewer' && reviewerStage != null ? 'My Queue' : 'All Statuses'}</option>
+            {(currentRole === 'reviewer' && reviewerStage === 2
+              ? (['STAGE1_APPROVED', 'STAGE1_HOLD', 'STAGE1_REJECTED'] as AssetStatus[])
+              : currentRole === 'reviewer' && reviewerStage === 1
+              ? (['TO_REVIEW'] as AssetStatus[])
+              : ASSET_STATUSES
+            ).map(status => (
               <option key={status} value={status}>
-                {STATUS_LABELS[status]}
+                {reviewerStage === 2 && status.startsWith('STAGE1_')
+                  ? `Jourdan ${STAGE1_DECISION_LABELS[status]}`
+                  : STATUS_LABELS[status]}
               </option>
             ))}
           </select>
