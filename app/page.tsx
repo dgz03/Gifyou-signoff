@@ -1331,6 +1331,7 @@ const App = () => {
   const [currentRole, setCurrentRole] = useState<Role>('creator');
   const [roleLocked, setRoleLocked] = useState(false);
   const [reviewerStage, setReviewerStage] = useState<1 | 2 | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
   const [events, setEvents] = useState<EventRecord[]>(INITIAL_EVENTS);
   const [assets, setAssets] = useState<UiAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
@@ -1634,14 +1635,19 @@ const App = () => {
 
     let isMounted = true;
     const loadRole = async () => {
-      const authToken = await getAuthToken(session);
-      if (!authToken) return;
-      const roleData = await fetchRoleFromApi(authToken);
-      if (!roleData || !isMounted) return;
-      setRoleLocked(roleData.locked);
-      setReviewerStage(roleData.reviewerStage);
-      if (roleData.locked) {
-        setCurrentRole(roleData.role);
+      setRoleLoading(true);
+      try {
+        const authToken = await getAuthToken(session);
+        if (!authToken) return;
+        const roleData = await fetchRoleFromApi(authToken);
+        if (!roleData || !isMounted) return;
+        setRoleLocked(roleData.locked);
+        setReviewerStage(roleData.reviewerStage);
+        if (roleData.locked) {
+          setCurrentRole(roleData.role);
+        }
+      } finally {
+        if (isMounted) setRoleLoading(false);
       }
     };
     void loadRole();
@@ -4026,6 +4032,9 @@ const App = () => {
   };
 
   const filteredAssets = useMemo(() => {
+    // Hold the queue until the role API has responded to avoid flashing wrong assets
+    if (roleLoading) return [];
+
     const isStage1Reviewer = currentRole === 'reviewer' && reviewerStage === 1;
     const isStage2Reviewer = currentRole === 'reviewer' && reviewerStage === 2;
 
@@ -4050,7 +4059,7 @@ const App = () => {
       }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [assets, filters, currentRole, reviewerStage]);
+  }, [assets, filters, currentRole, reviewerStage, roleLoading]);
 
   useEffect(() => {
     if (selectedAssetIds.length === 0) return;
