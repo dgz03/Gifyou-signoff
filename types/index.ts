@@ -1,5 +1,5 @@
 export type SkinTone = 'FAIR' | 'LIGHT' | 'OLIVE' | 'MEDIUM_BROWN' | 'DARK_BROWN' | 'DEEP' | 'ALL';
-export type AssetStatus = 'TO_REVIEW' | 'APPROVED' | 'HOLD' | 'REJECTED';
+export type AssetStatus = 'TO_REVIEW' | 'APPROVED' | 'HOLD' | 'REJECTED' | 'STAGE1_APPROVED' | 'STAGE1_HOLD' | 'STAGE1_REJECTED';
 export type Role = 'CREATOR' | 'REVIEWER' | 'ADMIN';
 
 export interface SkinToneInfo {

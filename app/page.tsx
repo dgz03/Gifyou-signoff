@@ -19,6 +19,7 @@ type UiAsset = {
   status: AssetStatus;
   uploader: string;
   reviewer?: string | null;
+  stage1Reviewer?: string | null;
   createdAt: string;
   updatedAt?: string;
   version: number;
@@ -141,16 +142,41 @@ const STATUS_LABELS: Record<AssetStatus, string> = {
   TO_REVIEW: 'To Review',
   APPROVED: 'Approved',
   HOLD: 'Hold',
-  REJECTED: 'Rejected'
+  REJECTED: 'Rejected',
+  STAGE1_APPROVED: 'In Review',
+  STAGE1_HOLD: 'In Review',
+  STAGE1_REJECTED: 'In Review'
 };
 
 const STATUS_STYLES: Record<AssetStatus, string> = {
   TO_REVIEW: 'bg-blue-100 text-blue-700 border-blue-200',
   APPROVED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   HOLD: 'bg-amber-100 text-amber-700 border-amber-200',
-  REJECTED: 'bg-rose-100 text-rose-700 border-rose-200'
+  REJECTED: 'bg-rose-100 text-rose-700 border-rose-200',
+  STAGE1_APPROVED: 'bg-violet-100 text-violet-700 border-violet-200',
+  STAGE1_HOLD: 'bg-violet-100 text-violet-700 border-violet-200',
+  STAGE1_REJECTED: 'bg-violet-100 text-violet-700 border-violet-200'
 };
 
+const STAGE1_DECISION_LABELS: Record<string, string> = {
+  STAGE1_APPROVED: 'Approved',
+  STAGE1_HOLD: 'Hold',
+  STAGE1_REJECTED: 'Rejected'
+};
+
+const STAGE1_DECISION_STYLES: Record<string, string> = {
+  STAGE1_APPROVED: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  STAGE1_HOLD: 'bg-amber-100 text-amber-700 border-amber-200',
+  STAGE1_REJECTED: 'bg-rose-100 text-rose-700 border-rose-200'
+};
+
+const STAGE1_SORT_ORDER: Record<string, number> = {
+  STAGE1_APPROVED: 0,
+  STAGE1_HOLD: 1,
+  STAGE1_REJECTED: 2
+};
+
+// Statuses shown in the filter dropdown for creators
 const ASSET_STATUSES: AssetStatus[] = ['TO_REVIEW', 'APPROVED', 'HOLD', 'REJECTED'];
 
 const LEGACY_STATUS_MAP: Record<string, AssetStatus> = {
@@ -161,7 +187,10 @@ const LEGACY_STATUS_MAP: Record<string, AssetStatus> = {
   TO_REVIEW: 'TO_REVIEW',
   APPROVED: 'APPROVED',
   HOLD: 'HOLD',
-  REJECTED: 'REJECTED'
+  REJECTED: 'REJECTED',
+  STAGE1_APPROVED: 'STAGE1_APPROVED',
+  STAGE1_HOLD: 'STAGE1_HOLD',
+  STAGE1_REJECTED: 'STAGE1_REJECTED'
 };
 
 const LEGACY_TONE_MAP: Record<string, SkinTone> = {
@@ -288,6 +317,11 @@ const normalizeStoredAssets = (input: unknown): UiAsset[] => {
 
       const uploader = typeof data.uploader === 'string' ? data.uploader : 'Creator Team';
       const reviewer = typeof data.reviewer === 'string' ? data.reviewer : null;
+      const stage1Reviewer = typeof data.stage1Reviewer === 'string'
+        ? data.stage1Reviewer
+        : typeof data.stage1_reviewer === 'string'
+        ? data.stage1_reviewer
+        : null;
       const version = typeof data.version === 'number' ? data.version : 1;
       const suggestionId = typeof data.suggestionId === 'string'
         ? data.suggestionId
@@ -303,6 +337,7 @@ const normalizeStoredAssets = (input: unknown): UiAsset[] => {
         status,
         uploader,
         reviewer,
+        stage1Reviewer,
         createdAt,
         updatedAt,
         version,
@@ -1069,7 +1104,8 @@ const fetchRoleFromApi = async (token?: string) => {
     if (!response.ok) return null;
     const payload = await response.json();
     if (payload?.role !== 'creator' && payload?.role !== 'reviewer') return null;
-    return { role: payload.role as Role, locked: Boolean(payload.locked) };
+    const reviewerStage = payload.reviewerStage === 1 ? 1 : payload.reviewerStage === 2 ? 2 : null;
+    return { role: payload.role as Role, locked: Boolean(payload.locked), reviewerStage: reviewerStage as 1 | 2 | null };
   } catch (error) {
     console.log('Role fetch failed:', error);
     return null;
@@ -1294,6 +1330,7 @@ const App = () => {
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [currentRole, setCurrentRole] = useState<Role>('creator');
   const [roleLocked, setRoleLocked] = useState(false);
+  const [reviewerStage, setReviewerStage] = useState<1 | 2 | null>(null);
   const [events, setEvents] = useState<EventRecord[]>(INITIAL_EVENTS);
   const [assets, setAssets] = useState<UiAsset[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
@@ -1602,6 +1639,7 @@ const App = () => {
       const roleData = await fetchRoleFromApi(authToken);
       if (!roleData || !isMounted) return;
       setRoleLocked(roleData.locked);
+      setReviewerStage(roleData.reviewerStage);
       if (roleData.locked) {
         setCurrentRole(roleData.role);
       }
@@ -2147,7 +2185,7 @@ const App = () => {
   }, [textSections]);
 
   const stats = useMemo(() => ({
-    toReview: assets.filter(asset => asset.status === 'TO_REVIEW').length,
+    toReview: assets.filter(asset => asset.status === 'TO_REVIEW' || asset.status === 'STAGE1_APPROVED' || asset.status === 'STAGE1_HOLD' || asset.status === 'STAGE1_REJECTED').length,
     approved: assets.filter(asset => asset.status === 'APPROVED').length,
     hold: assets.filter(asset => asset.status === 'HOLD').length,
     rejected: assets.filter(asset => asset.status === 'REJECTED').length
@@ -2672,13 +2710,17 @@ const App = () => {
     const actor = actorLabel;
     const cleanedNotes = notes.trim();
     const updatedAt = new Date().toISOString();
+    const isStage1Action = action === 'STAGE1_APPROVED' || action === 'STAGE1_HOLD' || action === 'STAGE1_REJECTED';
+    const needsNotes = action === 'HOLD' || action === 'REJECTED' || action === 'STAGE1_HOLD' || action === 'STAGE1_REJECTED';
+
     setAssets(prev => prev.map(asset => {
       if (asset.id === assetId) {
         return {
           ...asset,
           status: action,
           reviewer: actor,
-          notesRefinement: (action === 'HOLD' || action === 'REJECTED') ? cleanedNotes : asset.notesRefinement,
+          stage1Reviewer: isStage1Action ? actor : asset.stage1Reviewer,
+          notesRefinement: needsNotes ? cleanedNotes : asset.notesRefinement,
           updatedAt
         };
       }
@@ -2706,7 +2748,8 @@ const App = () => {
         ...current,
         status: action,
         reviewer: actor,
-        notesRefinement: (action === 'HOLD' || action === 'REJECTED') ? cleanedNotes : current.notesRefinement,
+        stage1Reviewer: isStage1Action ? actor : current.stage1Reviewer,
+        notesRefinement: needsNotes ? cleanedNotes : current.notesRefinement,
         updatedAt
       };
       const synced = await saveAssetsToApi([updatedAsset], authToken);
@@ -3983,7 +4026,15 @@ const App = () => {
   };
 
   const filteredAssets = useMemo(() => {
+    const isStage1Reviewer = currentRole === 'reviewer' && reviewerStage === 1;
+    const isStage2Reviewer = currentRole === 'reviewer' && reviewerStage === 2;
+
     const list = assets.filter(asset => {
+      // Stage-specific default queue when no status filter is set
+      if (!filters.status) {
+        if (isStage1Reviewer) return asset.status === 'TO_REVIEW';
+        if (isStage2Reviewer) return asset.status === 'STAGE1_APPROVED' || asset.status === 'STAGE1_HOLD' || asset.status === 'STAGE1_REJECTED';
+      }
       if (filters.status && asset.status !== filters.status) return false;
       if (filters.eventId && asset.eventId !== filters.eventId) return false;
       if (filters.skinTone && asset.skinTone !== filters.skinTone && asset.skinTone !== ALL_TONE_ID) return false;
@@ -3991,9 +4042,15 @@ const App = () => {
     });
 
     return [...list].sort((a, b) => {
+      // Sabina's queue: STAGE1_APPROVED first, then STAGE1_HOLD, then STAGE1_REJECTED
+      if (isStage2Reviewer && !filters.status) {
+        const orderA = STAGE1_SORT_ORDER[a.status] ?? 99;
+        const orderB = STAGE1_SORT_ORDER[b.status] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+      }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [assets, filters]);
+  }, [assets, filters, currentRole, reviewerStage]);
 
   useEffect(() => {
     if (selectedAssetIds.length === 0) return;
@@ -4371,6 +4428,27 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
         </div>
       </div>
 
+        {currentRole === 'reviewer' && reviewerStage === 1 && !filters.status && (
+          <div className="rounded-xl border-2 border-blue-100 bg-blue-50 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-blue-800">Stage 1 Queue — your approvals go to Sabina for final sign-off</p>
+              <p className="text-xs text-blue-600 mt-0.5">
+                {assets.filter(a => a.status === 'TO_REVIEW').length} remaining · {assets.filter(a => a.status === 'STAGE1_APPROVED' || a.status === 'STAGE1_HOLD' || a.status === 'STAGE1_REJECTED').length} sent to Sabina
+              </p>
+            </div>
+          </div>
+        )}
+        {currentRole === 'reviewer' && reviewerStage === 2 && !filters.status && (
+          <div className="rounded-xl border-2 border-violet-100 bg-violet-50 px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-violet-800">Final Sign-off Queue — Jourdan's reviewed assets</p>
+              <p className="text-xs text-violet-600 mt-0.5">
+                {assets.filter(a => a.status === 'STAGE1_APPROVED').length} to approve · {assets.filter(a => a.status === 'STAGE1_HOLD').length} on hold · {assets.filter(a => a.status === 'STAGE1_REJECTED').length} rejected by Stage 1
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-xl border-2 border-gray-200 p-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-xl font-bold text-gray-900">{filteredAssets.length} Assets</h3>
@@ -4462,6 +4540,11 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   {asset.suggestionId && (
                     <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">Suggested</span>
                   )}
+                  {reviewerStage === 2 && (asset.status === 'STAGE1_APPROVED' || asset.status === 'STAGE1_HOLD' || asset.status === 'STAGE1_REJECTED') && (
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STAGE1_DECISION_STYLES[asset.status] ?? ''}`}>
+                      Jourdan: {STAGE1_DECISION_LABELS[asset.status] ?? ''}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -4480,12 +4563,9 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
 
     const handleSubmitReview = async () => {
       if (!reviewAction) return;
-      if (reviewAction === 'HOLD' && !reviewNotes.trim()) {
-        alert('Please provide refinement notes for Hold status');
-        return;
-      }
-      if (reviewAction === 'REJECTED' && !reviewNotes.trim()) {
-        alert('Please provide a reason for rejection');
+      const needsNotes = reviewAction === 'HOLD' || reviewAction === 'REJECTED' || reviewAction === 'STAGE1_HOLD' || reviewAction === 'STAGE1_REJECTED';
+      if (needsNotes && !reviewNotes.trim()) {
+        alert('Please provide notes before submitting.');
         return;
       }
       await handleReviewAction(selectedAsset.id, reviewAction, reviewNotes);
@@ -4573,38 +4653,40 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
               <h2 className="text-3xl font-bold text-gray-900">{selectedAsset.title}</h2>
             </div>
 
-            {currentRole === 'reviewer' && selectedAsset.status === 'TO_REVIEW' && (
+            {/* Stage 1 reviewer (Jourdan) — acts on TO_REVIEW assets */}
+            {currentRole === 'reviewer' && reviewerStage === 1 && selectedAsset.status === 'TO_REVIEW' && (
               <div className="bg-white rounded-xl border-2 border-gray-200 p-6">
-                <h3 className="text-lg font-bold mb-4">Review Actions</h3>
+                <h3 className="text-lg font-bold mb-1">Stage 1 Review</h3>
+                <p className="text-sm text-gray-500 mb-4">Your decision sends this to Sabina for final sign-off.</p>
                 <div className="space-y-4">
                   <div className="grid grid-cols-3 gap-3">
-                    <button 
-                      onClick={() => setReviewAction('APPROVED')}
+                    <button
+                      onClick={() => setReviewAction('STAGE1_APPROVED')}
                       className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
-                        reviewAction === 'APPROVED' 
-                          ? 'border-green-500 bg-green-50 text-green-700 shadow-lg scale-105' 
+                        reviewAction === 'STAGE1_APPROVED'
+                          ? 'border-green-500 bg-green-50 text-green-700 shadow-lg scale-105'
                           : 'border-gray-200 hover:border-green-300 hover:bg-green-50'
                       }`}
                     >
                       <Check className="w-6 h-6 mx-auto mb-2" />
                       Approve
                     </button>
-                    <button 
-                      onClick={() => setReviewAction('HOLD')}
+                    <button
+                      onClick={() => setReviewAction('STAGE1_HOLD')}
                       className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
-                        reviewAction === 'HOLD' 
-                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700 shadow-lg scale-105' 
+                        reviewAction === 'STAGE1_HOLD'
+                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700 shadow-lg scale-105'
                           : 'border-gray-200 hover:border-yellow-300 hover:bg-yellow-50'
                       }`}
                     >
                       <Pause className="w-6 h-6 mx-auto mb-2" />
                       Hold
                     </button>
-                    <button 
-                      onClick={() => setReviewAction('REJECTED')}
+                    <button
+                      onClick={() => setReviewAction('STAGE1_REJECTED')}
                       className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
-                        reviewAction === 'REJECTED' 
-                          ? 'border-red-500 bg-red-50 text-red-700 shadow-lg scale-105' 
+                        reviewAction === 'STAGE1_REJECTED'
+                          ? 'border-red-500 bg-red-50 text-red-700 shadow-lg scale-105'
                           : 'border-gray-200 hover:border-red-300 hover:bg-red-50'
                       }`}
                     >
@@ -4612,23 +4694,90 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                       Reject
                     </button>
                   </div>
-
-                  {(reviewAction === 'HOLD' || reviewAction === 'REJECTED') && (
+                  {(reviewAction === 'STAGE1_HOLD' || reviewAction === 'STAGE1_REJECTED') && (
                     <textarea
-                      placeholder={reviewAction === 'HOLD' ? 'Describe refinements needed...' : 'Reason for rejection...'}
+                      placeholder={reviewAction === 'STAGE1_HOLD' ? 'Describe refinements needed...' : 'Reason for rejection...'}
                       className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
-                      rows="4"
+                      rows={4}
                       value={reviewNotes}
                       onChange={(e) => setReviewNotes(e.target.value)}
                     />
                   )}
-
                   {reviewAction && (
-                    <button 
+                    <button
                       onClick={handleSubmitReview}
                       className="w-full py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium transition-colors"
                     >
-                      Submit Review
+                      Submit Stage 1 Decision
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Stage 2 reviewer (Sabina) — acts on STAGE1_* assets for final sign-off */}
+            {currentRole === 'reviewer' && reviewerStage === 2 && (selectedAsset.status === 'STAGE1_APPROVED' || selectedAsset.status === 'STAGE1_HOLD' || selectedAsset.status === 'STAGE1_REJECTED') && (
+              <div className="bg-white rounded-xl border-2 border-violet-200 p-6">
+                <h3 className="text-lg font-bold mb-1">Final Sign-off</h3>
+                {selectedAsset.stage1Reviewer && (
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-sm text-gray-500">Stage 1 by {selectedAsset.stage1Reviewer}:</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${STAGE1_DECISION_STYLES[selectedAsset.status] ?? ''}`}>
+                      {STAGE1_DECISION_LABELS[selectedAsset.status] ?? ''}
+                    </span>
+                  </div>
+                )}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={() => setReviewAction('APPROVED')}
+                      className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
+                        reviewAction === 'APPROVED'
+                          ? 'border-green-500 bg-green-50 text-green-700 shadow-lg scale-105'
+                          : 'border-gray-200 hover:border-green-300 hover:bg-green-50'
+                      }`}
+                    >
+                      <Check className="w-6 h-6 mx-auto mb-2" />
+                      Final Approve
+                    </button>
+                    <button
+                      onClick={() => setReviewAction('HOLD')}
+                      className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
+                        reviewAction === 'HOLD'
+                          ? 'border-yellow-500 bg-yellow-50 text-yellow-700 shadow-lg scale-105'
+                          : 'border-gray-200 hover:border-yellow-300 hover:bg-yellow-50'
+                      }`}
+                    >
+                      <Pause className="w-6 h-6 mx-auto mb-2" />
+                      Hold
+                    </button>
+                    <button
+                      onClick={() => setReviewAction('REJECTED')}
+                      className={`py-4 px-4 rounded-xl border-2 transition-all font-medium ${
+                        reviewAction === 'REJECTED'
+                          ? 'border-red-500 bg-red-50 text-red-700 shadow-lg scale-105'
+                          : 'border-gray-200 hover:border-red-300 hover:bg-red-50'
+                      }`}
+                    >
+                      <X className="w-6 h-6 mx-auto mb-2" />
+                      Reject
+                    </button>
+                  </div>
+                  {(reviewAction === 'HOLD' || reviewAction === 'REJECTED') && (
+                    <textarea
+                      placeholder={reviewAction === 'HOLD' ? 'Describe refinements needed...' : 'Reason for rejection...'}
+                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none"
+                      rows={4}
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                    />
+                  )}
+                  {reviewAction && (
+                    <button
+                      onClick={handleSubmitReview}
+                      className="w-full py-3 bg-violet-600 text-white rounded-xl hover:bg-violet-700 font-medium transition-colors"
+                    >
+                      Submit Final Decision
                     </button>
                   )}
                 </div>
@@ -4674,9 +4823,15 @@ const getEventTiming = (event: { startDate: string; endDate?: string | null }) =
                   <div className="text-gray-500 mb-1">Uploaded by</div>
                   <div className="font-semibold text-gray-900">{selectedAsset.uploader}</div>
                 </div>
-                {selectedAsset.reviewer && (
+                {selectedAsset.stage1Reviewer && (
                   <div>
-                    <div className="text-gray-500 mb-1">Reviewed by</div>
+                    <div className="text-gray-500 mb-1">Stage 1 review</div>
+                    <div className="font-semibold text-gray-900">{selectedAsset.stage1Reviewer}</div>
+                  </div>
+                )}
+                {selectedAsset.reviewer && selectedAsset.reviewer !== selectedAsset.stage1Reviewer && (
+                  <div>
+                    <div className="text-gray-500 mb-1">{selectedAsset.stage1Reviewer ? 'Final review' : 'Reviewed by'}</div>
                     <div className="font-semibold text-gray-900">{selectedAsset.reviewer}</div>
                   </div>
                 )}

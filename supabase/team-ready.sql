@@ -72,6 +72,10 @@ create table if not exists notification_state (
 alter table if exists assets add column if not exists suggestion_id text;
 alter table if exists assets add column if not exists previous_media_url text;
 
+-- Two-stage review: stage1_reviewer stores who made the stage-1 decision (Jourdan)
+-- so it is preserved after the stage-2 reviewer (Sabina) makes the final call.
+alter table if exists assets add column if not exists stage1_reviewer text;
+
 -- Lock down tables for client access (service role bypasses RLS).
 alter table if exists assets enable row level security;
 alter table if exists events enable row level security;

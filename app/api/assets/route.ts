@@ -19,6 +19,7 @@ type IncomingAsset = {
   status: string;
   uploader: string;
   reviewer?: string | null;
+  stage1Reviewer?: string | null;
   createdAt: string;
   updatedAt?: string;
   version?: number;
@@ -107,6 +108,7 @@ const mapToDbAsset = (asset: IncomingAsset) => ({
   status: asset.status,
   uploader: asset.uploader,
   reviewer: asset.reviewer ?? null,
+  stage1_reviewer: asset.stage1Reviewer ?? null,
   created_at: asset.createdAt,
   updated_at: asset.updatedAt ?? null,
   version: asset.version ?? 1,
